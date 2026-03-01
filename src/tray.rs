@@ -11,6 +11,11 @@ use crate::web::{SharedState, TUTORIAL_URL};
 
 pub struct TrayHandle {
     _tray: tray_icon::TrayIcon,
+    dispatcher: TrayDispatcher,
+}
+
+#[derive(Clone)]
+pub struct TrayDispatcher {
     state: Arc<Mutex<SharedState>>,
     config_path: std::path::PathBuf,
     curl_path: std::path::PathBuf,
@@ -65,11 +70,11 @@ pub fn start_tray(
         .with_menu(Box::new(menu))
         .with_tooltip("ePortal Guard")
         .with_icon(icon)
+        .with_icon_as_template(true)
         .build()
         .map_err(|e| e.to_string())?;
 
-    Ok(TrayHandle {
-        _tray: tray,
+    let dispatcher = TrayDispatcher {
         state,
         config_path,
         curl_path,
@@ -83,50 +88,83 @@ pub fn start_tray(
         open_curl_id,
         auto_id,
         quit_id,
+    };
+
+    Ok(TrayHandle {
+        _tray: tray,
+        dispatcher,
     })
 }
 
 impl TrayHandle {
     pub fn process_events(&self) {
+        self.dispatcher.process_events_nonblocking();
+    }
+
+    pub fn dispatcher(&self) -> TrayDispatcher {
+        self.dispatcher.clone()
+    }
+}
+
+impl TrayDispatcher {
+    pub fn process_events_nonblocking(&self) {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if event.id == self.status_id {
-                let s = self.state.lock().map(|v| v.clone()).unwrap_or_default();
-                notifier::notify("ePortal Guard 状态", &format!("{} {}", s.status_text, s.last_error));
-                continue;
-            }
-            if event.id == self.login_id {
-                (self.on_manual_login)();
-                continue;
-            }
-            if event.id == self.open_config_id {
-                let _ = platform::open_path(&self.config_path);
-                continue;
-            }
-            if event.id == self.tutorial_id {
-                let _ = platform::open_url(TUTORIAL_URL);
-                continue;
-            }
-            if event.id == self.open_curl_id {
-                let _ = platform::open_path(&self.curl_path);
-                continue;
-            }
-            if event.id == self.auto_id {
-                let current = autostart::is_enabled(&self.exe_path);
-                match autostart::set_enabled(&self.exe_path, !current) {
-                    Ok(_) => notifier::notify(
-                        "ePortal Guard",
-                        if current { "开机自启已关闭" } else { "开机自启已开启" },
-                    ),
-                    Err(e) => notifier::notify("ePortal Guard", &e),
-                }
-                continue;
-            }
-            if event.id == self.quit_id {
-                notifier::notify("ePortal Guard", "程序退出");
-                (self.on_exit)();
+            if self.handle_event(event.id.clone()) {
                 break;
             }
         }
+    }
+
+    pub fn run_blocking(&self) {
+        loop {
+            let Ok(event) = MenuEvent::receiver().recv() else {
+                break;
+            };
+            if self.handle_event(event.id) {
+                break;
+            }
+        }
+    }
+
+    fn handle_event(&self, id: MenuId) -> bool {
+        if id == self.status_id {
+            let s = self.state.lock().map(|v| v.clone()).unwrap_or_default();
+            notifier::notify("ePortal Guard 状态", &format!("{} {}", s.status_text, s.last_error));
+            return false;
+        }
+        if id == self.login_id {
+            (self.on_manual_login)();
+            return false;
+        }
+        if id == self.open_config_id {
+            let _ = platform::open_path(&self.config_path);
+            return false;
+        }
+        if id == self.tutorial_id {
+            let _ = platform::open_url(TUTORIAL_URL);
+            return false;
+        }
+        if id == self.open_curl_id {
+            let _ = platform::open_path(&self.curl_path);
+            return false;
+        }
+        if id == self.auto_id {
+            let current = autostart::is_enabled(&self.exe_path);
+            match autostart::set_enabled(&self.exe_path, !current) {
+                Ok(_) => notifier::notify(
+                    "ePortal Guard",
+                    if current { "开机自启已关闭" } else { "开机自启已开启" },
+                ),
+                Err(e) => notifier::notify("ePortal Guard", &e),
+            }
+            return false;
+        }
+        if id == self.quit_id {
+            notifier::notify("ePortal Guard", "程序退出");
+            (self.on_exit)();
+            return true;
+        }
+        false
     }
 }
 

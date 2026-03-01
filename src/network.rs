@@ -1,43 +1,67 @@
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::process::Command;
 use std::process::Stdio;
+use std::time::Instant;
 
-pub fn ping_once(host: &str) -> bool {
+#[derive(Clone, Debug)]
+pub struct PingProbe {
+    pub ok: bool,
+    pub elapsed_ms: u128,
+}
+
+pub fn ping_probe(host: &str) -> PingProbe {
+    let begin = Instant::now();
+
     #[cfg(target_os = "windows")]
     {
-        return Command::new("ping")
+        let ok = Command::new("ping")
             .args(["-n", "1", "-w", "1000", host])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
+        return PingProbe {
+            ok,
+            elapsed_ms: begin.elapsed().as_millis(),
+        };
     }
 
     #[cfg(target_os = "macos")]
     {
-        return Command::new("ping")
+        let ok = Command::new("ping")
             .args(["-c", "1", "-W", "1000", host])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
+        return PingProbe {
+            ok,
+            elapsed_ms: begin.elapsed().as_millis(),
+        };
     }
 
     #[cfg(target_os = "linux")]
     {
-        return Command::new("ping")
+        let ok = Command::new("ping")
             .args(["-c", "1", "-W", "1", host])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
+        return PingProbe {
+            ok,
+            elapsed_ms: begin.elapsed().as_millis(),
+        };
     }
 
     #[allow(unreachable_code)]
-    false
+    PingProbe {
+        ok: false,
+        elapsed_ms: begin.elapsed().as_millis(),
+    }
 }
 
 pub fn has_private_ip() -> bool {

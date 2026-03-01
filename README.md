@@ -40,3 +40,7 @@ cargo run --release
 如桌面环境托盘不可见，可直接打开浏览器访问：
 
 - `http://127.0.0.1:18888`
+
+## 参考
+
+https://www.lhcloud.com.cn/archives/13/

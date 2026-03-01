@@ -1,5 +1,8 @@
+#[cfg(target_os = "linux")]
 use std::env;
+#[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -22,7 +25,7 @@ pub fn is_enabled(_exe_path: &std::path::Path) -> bool {
 
     #[cfg(target_os = "macos")]
     {
-        return launch_agent_path().exists();
+        return macos_login_item_exists(_exe_path).unwrap_or(false);
     }
 
     #[cfg(target_os = "linux")]
@@ -82,31 +85,13 @@ pub fn set_enabled(exe_path: &std::path::Path, enabled: bool) -> Result<(), Stri
 
     #[cfg(target_os = "macos")]
     {
-        let plist = launch_agent_path();
         if enabled {
-            if let Some(parent) = plist.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            let content = format!(
-                r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
-<plist version=\"1.0\"><dict>
-<key>Label</key><string>com.eportal.guard</string>
-<key>ProgramArguments</key><array><string>{}</string></array>
-<key>RunAtLoad</key><true/>
-</dict></plist>
-"#,
-                exe_path.to_string_lossy()
-            );
-            fs::write(&plist, content).map_err(|e| e.to_string())?;
-            let _ = Command::new("launchctl").args(["load", "-w"]).arg(&plist).status();
+            macos_remove_login_item(exe_path).ok();
+            macos_add_login_item(exe_path).map_err(|e| format!("添加 macOS 登录项失败: {}", e))?;
             return Ok(());
         }
 
-        if plist.exists() {
-            let _ = Command::new("launchctl").args(["unload", "-w"]).arg(&plist).status();
-            fs::remove_file(plist).map_err(|e| e.to_string())?;
-        }
+        macos_remove_login_item(exe_path).map_err(|e| format!("移除 macOS 登录项失败: {}", e))?;
         return Ok(());
     }
 
@@ -139,12 +124,71 @@ pub fn set_enabled(exe_path: &std::path::Path, enabled: bool) -> Result<(), Stri
 }
 
 #[cfg(target_os = "macos")]
-fn launch_agent_path() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join("Library")
-        .join("LaunchAgents")
-        .join("com.eportal.guard.plist")
+fn macos_login_item_exists(exe_path: &std::path::Path) -> Result<bool, String> {
+    let expected = exe_path.to_string_lossy().to_string();
+    let paths = macos_login_item_paths()?;
+    Ok(paths.iter().any(|p| p == &expected))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_add_login_item(exe_path: &std::path::Path) -> Result<(), String> {
+    let path = escape_applescript(&exe_path.to_string_lossy());
+    let file_name = exe_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("eportal_guard");
+    let name = escape_applescript(file_name);
+    let script = format!(
+        "tell application \"System Events\" to make login item at end with properties {{name:\"{}\", path:\"{}\", hidden:false}}",
+        name, path
+    );
+    run_osascript(&script)?;
+    if macos_login_item_exists(exe_path).unwrap_or(false) {
+        Ok(())
+    } else {
+        Err("登录项添加后状态校验失败".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_remove_login_item(exe_path: &std::path::Path) -> Result<(), String> {
+    let path = escape_applescript(&exe_path.to_string_lossy());
+    let script = format!(
+        "tell application \"System Events\" to delete (every login item whose path is \"{}\")",
+        path
+    );
+    run_osascript(&script).map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_login_item_paths() -> Result<Vec<String>, String> {
+    let out = run_osascript("tell application \"System Events\" to get the path of every login item")?;
+    let paths = out
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    Ok(paths)
+}
+
+#[cfg(target_os = "macos")]
+fn run_osascript(script: &str) -> Result<String, String> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+
+    Err(String::from_utf8_lossy(&output.stderr).to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn escape_applescript(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(target_os = "linux")]

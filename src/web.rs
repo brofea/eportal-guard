@@ -10,11 +10,59 @@ use crate::notifier;
 use crate::platform;
 
 pub const TUTORIAL_URL: &str = "https://github.com/curl/curl";
+const WEB_JS: &str = r#"<script>
+function setStatusText(status, error, ping, tray) {
+    const statusEl = document.getElementById('status_text');
+    const errorEl = document.getElementById('error_text');
+    const pingEl = document.getElementById('ping_text');
+    const trayEl = document.getElementById('tray_text');
+    if (statusEl) statusEl.textContent = status || '';
+    if (errorEl) errorEl.textContent = error || '';
+    if (pingEl) pingEl.textContent = ping || '';
+    if (trayEl) trayEl.textContent = tray || '';
+}
+
+async function refreshStatus() {
+    try {
+        const resp = await fetch('/status');
+        const text = await resp.text();
+        const lines = text.split('\n');
+        setStatusText(lines[0] || '', lines[1] || '', lines[2] || '', lines[3] || '');
+    } catch (_) {}
+}
+
+async function postAction(action, formId) {
+    const result = document.getElementById('result');
+    let body = new URLSearchParams();
+    if (formId) {
+        const form = document.getElementById(formId);
+        if (form) {
+            body = new URLSearchParams(new FormData(form));
+        }
+    }
+    try {
+        const resp = await fetch(action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+            body,
+        });
+        const text = await resp.text();
+        result.textContent = (resp.ok ? '成功: ' : '失败: ') + text;
+    } catch (e) {
+        result.textContent = '请求失败: ' + (e && e.message ? e.message : e);
+    }
+}
+
+setInterval(refreshStatus, 2000);
+refreshStatus();
+</script>"#;
 
 #[derive(Clone, Debug)]
 pub struct SharedState {
     pub status_text: String,
     pub last_error: String,
+    pub last_ping_text: String,
+    pub tray_status_text: String,
 }
 
 impl Default for SharedState {
@@ -22,6 +70,8 @@ impl Default for SharedState {
         Self {
             status_text: "初始化中".to_string(),
             last_error: String::new(),
+            last_ping_text: "尚无 ping 结果".to_string(),
+            tray_status_text: "托盘状态未知".to_string(),
         }
     }
 }
@@ -69,6 +119,23 @@ fn handle_request(
             .ok();
             let mut resp = Response::from_string(body).with_status_code(200);
             if let Some(header) = html_header {
+                resp = resp.with_header(header);
+            }
+            let _ = req.respond(resp);
+        }
+        (&Method::Get, "/status") => {
+            let s = state.lock().map(|v| v.clone()).unwrap_or_default();
+            let body = format!(
+                "{}\n{}\n{}\n{}",
+                s.status_text, s.last_error, s.last_ping_text, s.tray_status_text
+            );
+            let header = Header::from_bytes(
+                b"Content-Type".as_slice(),
+                b"text/plain; charset=utf-8".as_slice(),
+            )
+            .ok();
+            let mut resp = Response::from_string(body).with_status_code(200);
+            if let Some(header) = header {
                 resp = resp.with_header(header);
             }
             let _ = req.respond(resp);
@@ -167,29 +234,34 @@ fn render_home(
     format!(
         "<!doctype html><html><head><meta charset='utf-8'><title>ePortal Guard</title></head><body>\
         <h2>ePortal Guard</h2>\
-        <p>状态: {}</p><p>错误: {}</p><p>自启: {}</p>\
-        <form method='post' action='/save'>\
+        <p>状态: <span id='status_text'>{}</span></p><p>错误: <span id='error_text'>{}</span></p><p>最近 ping: <span id='ping_text'>{}</span></p><p>托盘: <span id='tray_text'>{}</span></p><p>自启: {}</p>\
+        <div id='result' style='padding:8px;border:1px solid #ddd;margin-bottom:8px;'>等待操作</div>\
+        <form id='cfgForm'>\
         ping间隔(s): <input name='ping_interval_secs' value='{}'/><br/>\
         ping服务器: <input name='ping_host' value='{}'/><br/>\
         Web端口: <input name='web_port' value='{}'/><br/>\
-        <button type='submit'>保存配置</button></form><hr/>\
-        <form method='post' action='/save-curl'>\
+        <button type='button' onclick=\"postAction('/save','cfgForm')\">保存配置</button></form><hr/>\
+        <form id='curlForm'>\
         <textarea name='curl' rows='6' cols='80'>{}</textarea><br/>\
-        <button type='submit'>保存cURL</button></form><hr/>\
-        <form method='post' action='/manual-login'><button>手动登录</button></form>\
-        <form method='post' action='/open-config'><button>打开config</button></form>\
-        <form method='post' action='/open-curl'><button>粘贴cURL</button></form>\
-        <form method='post' action='/tutorial'><button>获取cURL教程</button></form>\
-        <form method='post' action='/toggle-autostart'><button>切换开机自启</button></form>\
-        <form method='post' action='/quit'><button>退出程序</button></form>\
+        <button type='button' onclick=\"postAction('/save-curl','curlForm')\">保存cURL</button></form><hr/>\
+        <button type='button' onclick=\"postAction('/manual-login')\">手动登录</button>\
+        <button type='button' onclick=\"postAction('/open-config')\">打开config</button>\
+        <button type='button' onclick=\"postAction('/open-curl')\">粘贴cURL</button>\
+        <button type='button' onclick=\"postAction('/tutorial')\">获取cURL教程</button>\
+        <button type='button' onclick=\"postAction('/toggle-autostart')\">切换开机自启</button>\
+        <button type='button' onclick=\"postAction('/quit')\">退出程序</button>\
+        {}\
         </body></html>",
         html_escape(&s.status_text),
         html_escape(&s.last_error),
+        html_escape(&s.last_ping_text),
+        html_escape(&s.tray_status_text),
         if autostart { "已开启" } else { "已关闭" },
         cfg.ping_interval_secs,
         html_escape(&cfg.ping_host),
         cfg.web_port,
         html_escape(&curl),
+                WEB_JS,
     )
 }
 
