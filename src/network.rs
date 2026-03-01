@@ -1,11 +1,14 @@
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::process::Command;
+use std::process::Stdio;
 
 pub fn ping_once(host: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
         return Command::new("ping")
             .args(["-n", "1", "-w", "1000", host])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -15,6 +18,8 @@ pub fn ping_once(host: &str) -> bool {
     {
         return Command::new("ping")
             .args(["-c", "1", "-W", "1000", host])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -24,6 +29,8 @@ pub fn ping_once(host: &str) -> bool {
     {
         return Command::new("ping")
             .args(["-c", "1", "-W", "1", host])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false);

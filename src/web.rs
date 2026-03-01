@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tiny_http::{Method, Request, Response, Server};
+use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::autostart;
 use crate::config;
@@ -62,7 +62,16 @@ fn handle_request(
     match (req.method(), url.as_str()) {
         (&Method::Get, "/") => {
             let body = render_home(state, config_path, curl_path, exe_path);
-            let _ = req.respond(Response::from_string(body).with_status_code(200));
+            let html_header = Header::from_bytes(
+                b"Content-Type".as_slice(),
+                b"text/html; charset=utf-8".as_slice(),
+            )
+            .ok();
+            let mut resp = Response::from_string(body).with_status_code(200);
+            if let Some(header) = html_header {
+                resp = resp.with_header(header);
+            }
+            let _ = req.respond(resp);
         }
         (&Method::Post, "/save") => {
             let form = read_form(&mut req);

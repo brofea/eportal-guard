@@ -69,23 +69,47 @@ fn run() -> Result<(), String> {
         tray::run_manual_login(&curl_path_for_manual);
     });
 
-    let tray = tray::start_tray(
-        Arc::clone(&shared_state),
-        config_path.clone(),
-        curl_path.clone(),
-        exe_path,
-        on_manual_login,
-        on_exit,
-    )
-    .map_err(|e| format!("托盘初始化失败: {}", e))?;
+    let tray = if should_enable_tray() {
+        Some(
+            tray::start_tray(
+                Arc::clone(&shared_state),
+                config_path.clone(),
+                curl_path.clone(),
+                exe_path,
+                on_manual_login,
+                on_exit,
+            )
+            .map_err(|e| format!("托盘初始化失败: {}", e))?,
+        )
+    } else {
+        notifier::notify("ePortal Guard", "当前会话未启用托盘，请使用 Web 后门");
+        None
+    };
 
     while running.load(Ordering::SeqCst) {
-        tray.process_events();
+        if let Some(tray) = &tray {
+            tray.process_events();
+        }
         thread::sleep(Duration::from_millis(300));
     }
 
     notifier::notify("ePortal Guard", "程序退出");
     Ok(())
+}
+
+fn should_enable_tray() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        if std::env::var("EPORTAL_TRAY_FORCE").ok().as_deref() == Some("1") {
+            return true;
+        }
+        return std::env::var("TERM_PROGRAM").is_err();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
 }
 
 fn start_monitor(
