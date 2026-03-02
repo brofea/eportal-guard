@@ -1,6 +1,20 @@
-<h1 align="center">ePortal Guard</h1>
 
-极致轻量的跨平台Web端锐捷校园网自动登录程序
+
+<div align="center">
+
+</div>
+
+<div align="center">
+    <img src="https://example.com/logo.png" width="120" />
+    <h1>ePortal Guard</h1>
+    <p>极致轻量的跨平台Web端锐捷校园网自动登录程序</p>
+    <p>
+        <img src="https://img.shields.io/badge/license-GPL--3.0-orange" />
+        <img src="https://img.shields.io/badge/github-brofea-green?logo=github" />
+        <img src="https://img.shields.io/badge/version-0-blue" />
+    </p>
+
+</div>
 
 ## 功能
 
@@ -10,8 +24,6 @@
 - 跨平台（Windows / macOS / Linux）
 
 ## 如何使用
-
-
 
 ## 配置目录
 
@@ -25,8 +37,6 @@
 - Windows: `%APPDATA%/eportal-guard`
 - macOS: `~/Library/Application Support/eportal-guard`
 - Linux: `$XDG_CONFIG_HOME/eportal-guard` 或 `~/.config/eportal-guard`
-
-
 
 ## 构建
 
@@ -49,3 +59,5 @@ cargo run --release
 ## 致谢
 
 - [Lucide Icons](https://lucide.dev/) - Licensed under the [ISC License].
+
+
