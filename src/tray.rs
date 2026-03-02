@@ -1,166 +1,126 @@
-use std::sync::{Arc, Mutex};
+use std::io::Cursor;
+use std::sync::Arc;
 
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
-use tray_icon::{Icon, TrayIconBuilder};
+use tray_icon::menu::{Icon as MenuIcon, IconMenuItem, Menu, MenuEvent};
+use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
 
-use crate::autostart;
-use crate::config;
-use crate::notifier;
+use crate::debuglog;
 use crate::platform;
-use crate::web::{SharedState, TUTORIAL_URL};
 
 pub struct TrayHandle {
     _tray: tray_icon::TrayIcon,
-    dispatcher: TrayDispatcher,
-}
-
-#[derive(Clone)]
-pub struct TrayDispatcher {
-    state: Arc<Mutex<SharedState>>,
-    config_path: std::path::PathBuf,
-    curl_path: std::path::PathBuf,
-    exe_path: std::path::PathBuf,
-    on_manual_login: Arc<dyn Fn() + Send + Sync>,
+    panel_url: String,
     on_exit: Arc<dyn Fn() + Send + Sync>,
-    status_id: MenuId,
-    login_id: MenuId,
-    open_config_id: MenuId,
-    tutorial_id: MenuId,
-    open_curl_id: MenuId,
-    auto_id: MenuId,
-    quit_id: MenuId,
+    open_panel_item: IconMenuItem,
+    quit_item: IconMenuItem,
 }
 
 pub fn start_tray(
-    state: Arc<Mutex<SharedState>>,
-    config_path: std::path::PathBuf,
-    curl_path: std::path::PathBuf,
-    exe_path: std::path::PathBuf,
-    on_manual_login: Arc<dyn Fn() + Send + Sync>,
+    web_port: u16,
     on_exit: Arc<dyn Fn() + Send + Sync>,
 ) -> Result<TrayHandle, String> {
+    debuglog::log("tray", "start_tray begin");
     let menu = Menu::new();
+    let panel_url = format!("http://127.0.0.1:{}/", web_port);
 
-    let status_item = MenuItem::new("显示状态", true, None);
-    let login_item = MenuItem::new("手动登录", true, None);
-    let open_config_item = MenuItem::new("打开配置文件", true, None);
-    let tutorial_item = MenuItem::new("获取cURL教程", true, None);
-    let open_curl_item = MenuItem::new("粘贴cURL", true, None);
-    let auto_item = MenuItem::new("切换开机自启", true, None);
-    let quit_item = MenuItem::new("退出程序", true, None);
+    let open_panel_item = IconMenuItem::new(
+        "控制面板",
+        true,
+        Some(load_menu_icon_bolt()),
+        None,
+    );
+    let quit_item = IconMenuItem::new("退出程序", true, Some(load_menu_icon_logout()), None);
 
-    menu.append(&status_item).map_err(|e| e.to_string())?;
-    menu.append(&login_item).map_err(|e| e.to_string())?;
-    menu.append(&open_config_item).map_err(|e| e.to_string())?;
-    menu.append(&tutorial_item).map_err(|e| e.to_string())?;
-    menu.append(&open_curl_item).map_err(|e| e.to_string())?;
-    menu.append(&auto_item).map_err(|e| e.to_string())?;
+    menu.append(&open_panel_item).map_err(|e| e.to_string())?;
     menu.append(&quit_item).map_err(|e| e.to_string())?;
 
-    let status_id = status_item.id().clone();
-    let login_id = login_item.id().clone();
-    let open_config_id = open_config_item.id().clone();
-    let tutorial_id = tutorial_item.id().clone();
-    let open_curl_id = open_curl_item.id().clone();
-    let auto_id = auto_item.id().clone();
-    let quit_id = quit_item.id().clone();
-
-    let icon = make_icon();
-    let tray = TrayIconBuilder::new()
+    let mut builder = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("ePortal Guard")
-        .with_icon(icon)
-        .with_icon_as_template(true)
-        .build()
-        .map_err(|e| e.to_string())?;
+        .with_temp_dir_path(crate::paths::app_config_dir())
+        .with_menu_on_left_click(true);
 
-    let dispatcher = TrayDispatcher {
-        state,
-        config_path,
-        curl_path,
-        exe_path,
-        on_manual_login,
-        on_exit,
-        status_id,
-        login_id,
-        open_config_id,
-        tutorial_id,
-        open_curl_id,
-        auto_id,
-        quit_id,
-    };
+    builder = builder.with_icon(load_tray_icon());
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.with_icon_as_template(true);
+        debuglog::log("tray", "macOS tray icon+title mode enabled: template icon");
+    }
+
+    let tray = builder
+        .build()
+        .map_err(|e| {
+            debuglog::log("tray", &format!("TrayIconBuilder build failed: {}", e));
+            e.to_string()
+        })?;
+    debuglog::log("tray", "tray icon build success");
+
+    if let Err(e) = tray.set_visible(true) {
+        debuglog::log("tray", &format!("set_visible(true) failed: {}", e));
+    } else {
+        debuglog::log("tray", "set_visible(true) ok");
+    }
 
     Ok(TrayHandle {
         _tray: tray,
-        dispatcher,
+        panel_url,
+        on_exit,
+        open_panel_item,
+        quit_item,
     })
 }
 
 impl TrayHandle {
-    pub fn process_events(&self) {
-        self.dispatcher.process_events_nonblocking();
-    }
+    #[cfg(target_os = "macos")]
+    pub fn install_macos_event_handlers(&self) {
+        let open_panel_id = self.open_panel_item.id().clone();
+        let quit_id = self.quit_item.id().clone();
 
-    pub fn dispatcher(&self) -> TrayDispatcher {
-        self.dispatcher.clone()
-    }
-}
+        let panel_url = self.panel_url.clone();
+        let on_exit = Arc::clone(&self.on_exit);
 
-impl TrayDispatcher {
-    pub fn process_events_nonblocking(&self) {
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if self.handle_event(event.id.clone()) {
-                break;
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            let id = event.id;
+            if id == open_panel_id {
+                debuglog::log("tray", "click: 打开控制面板");
+                let _ = platform::open_url(&panel_url);
+                return;
             }
-        }
+            if id == quit_id {
+                debuglog::log("tray", "click: 退出程序");
+                on_exit();
+            }
+        }));
+
+        TrayIconEvent::set_event_handler(Some(move |event| {
+            debuglog::log("tray", &format!("tray icon event: {:?}", event));
+        }));
+
+        debuglog::log("tray", "macOS menu/tray event handlers installed");
     }
 
-    pub fn run_blocking(&self) {
-        loop {
-            let Ok(event) = MenuEvent::receiver().recv() else {
-                break;
-            };
+    pub fn process_events(&self) {
+        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+            debuglog::log("tray", &format!("tray icon event: {:?}", event));
+        }
+
+        while let Ok(event) = MenuEvent::receiver().try_recv() {
+            debuglog::log("tray", &format!("menu event id={:?}", event.id));
             if self.handle_event(event.id) {
                 break;
             }
         }
     }
 
-    fn handle_event(&self, id: MenuId) -> bool {
-        if id == self.status_id {
-            let s = self.state.lock().map(|v| v.clone()).unwrap_or_default();
-            notifier::notify("ePortal Guard 状态", &format!("{} {}", s.status_text, s.last_error));
+    fn handle_event(&self, id: tray_icon::menu::MenuId) -> bool {
+        if id == self.open_panel_item.id() {
+            debuglog::log("tray", "click: 打开控制面板");
+            let _ = platform::open_url(&self.panel_url);
             return false;
         }
-        if id == self.login_id {
-            (self.on_manual_login)();
-            return false;
-        }
-        if id == self.open_config_id {
-            let _ = platform::open_path(&self.config_path);
-            return false;
-        }
-        if id == self.tutorial_id {
-            let _ = platform::open_url(TUTORIAL_URL);
-            return false;
-        }
-        if id == self.open_curl_id {
-            let _ = platform::open_path(&self.curl_path);
-            return false;
-        }
-        if id == self.auto_id {
-            let current = autostart::is_enabled(&self.exe_path);
-            match autostart::set_enabled(&self.exe_path, !current) {
-                Ok(_) => notifier::notify(
-                    "ePortal Guard",
-                    if current { "开机自启已关闭" } else { "开机自启已开启" },
-                ),
-                Err(e) => notifier::notify("ePortal Guard", &e),
-            }
-            return false;
-        }
-        if id == self.quit_id {
-            notifier::notify("ePortal Guard", "程序退出");
+        if id == self.quit_item.id() {
+            debuglog::log("tray", "click: 退出程序");
             (self.on_exit)();
             return true;
         }
@@ -168,36 +128,103 @@ impl TrayDispatcher {
     }
 }
 
-fn make_icon() -> Icon {
+fn load_tray_icon() -> Icon {
+    match decode_png_rgba(include_bytes!("assets/earth.png")) {
+        Ok((rgba, w, h)) => match Icon::from_rgba(rgba, w, h) {
+            Ok(icon) => {
+                debuglog::log("tray", "tray icon loaded from embedded earth.png");
+                icon
+            }
+            Err(e) => {
+                debuglog::log("tray", &format!("globe icon create failed: {}", e));
+                make_dot_tray_icon()
+            }
+        },
+        Err(e) => {
+            debuglog::log("tray", &format!("embedded earth.png decode failed: {}", e));
+            make_dot_tray_icon()
+        }
+    }
+}
+
+fn load_menu_icon_bolt() -> MenuIcon {
+    match decode_png_rgba(include_bytes!("assets/bolt.png")) {
+        Ok((rgba, w, h)) => match MenuIcon::from_rgba(rgba, w, h) {
+            Ok(icon) => {
+                debuglog::log("tray", "menu icon loaded from embedded bolt.png");
+                icon
+            }
+            Err(e) => {
+                debuglog::log("tray", &format!("bolt icon create failed: {}", e));
+                MenuIcon::from_rgba(vec![0; 4], 1, 1).expect("fallback menu icon create")
+            }
+        },
+        Err(e) => {
+            debuglog::log("tray", &format!("embedded bolt.png decode failed: {}", e));
+            MenuIcon::from_rgba(vec![0; 4], 1, 1).expect("fallback menu icon create")
+        }
+    }
+}
+
+fn load_menu_icon_logout() -> MenuIcon {
+    match decode_png_rgba(include_bytes!("assets/log-out.png")) {
+        Ok((rgba, w, h)) => match MenuIcon::from_rgba(rgba, w, h) {
+            Ok(icon) => {
+                debuglog::log("tray", "menu icon loaded from embedded log-out.png");
+                icon
+            }
+            Err(e) => {
+                debuglog::log("tray", &format!("log-out icon create failed: {}", e));
+                MenuIcon::from_rgba(vec![0; 4], 1, 1).expect("fallback menu icon create")
+            }
+        },
+        Err(e) => {
+            debuglog::log("tray", &format!("embedded log-out.png decode failed: {}", e));
+            MenuIcon::from_rgba(vec![0; 4], 1, 1).expect("fallback menu icon create")
+        }
+    }
+}
+
+fn decode_png_rgba(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    let decoder = png::Decoder::new(Cursor::new(bytes));
+    let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
+    let frame = &buf[..info.buffer_size()];
+
+    let mut rgba = Vec::with_capacity((info.width * info.height * 4) as usize);
+    match info.color_type {
+        png::ColorType::Rgba => rgba.extend_from_slice(frame),
+        png::ColorType::Rgb => {
+            for chunk in frame.chunks_exact(3) {
+                rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+            }
+        }
+        _ => {
+            return Err(format!(
+                "unsupported png color type: {:?}",
+                info.color_type
+            ));
+        }
+    }
+
+    Ok((rgba, info.width, info.height))
+}
+
+
+fn make_dot_tray_icon() -> Icon {
     let w = 16;
     let h = 16;
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
         for x in 0..w {
-            let on = (x + y) % 2 == 0;
-            let (r, g, b) = if on { (28, 132, 255) } else { (18, 48, 88) };
-            rgba.extend_from_slice(&[r, g, b, 255]);
+            let in_dot = (x - 8) * (x - 8) + (y - 8) * (y - 8) <= 36;
+            if in_dot {
+                rgba.extend_from_slice(&[32, 122, 214, 255]);
+            } else {
+                rgba.extend_from_slice(&[0, 0, 0, 0]);
+            }
         }
     }
-    Icon::from_rgba(rgba, w, h).expect("icon create")
-}
-
-pub fn run_manual_login(curl_path: &std::path::Path) {
-    let cmd = config::read_curl(curl_path).unwrap_or_default();
-    if cmd.trim().is_empty() {
-        notifier::notify("ePortal Guard", "curl.txt 为空");
-        return;
-    }
-
-    if !crate::network::curl_exists() {
-        notifier::notify("ePortal Guard", "未检测到系统 curl 命令");
-        return;
-    }
-
-    let ok = platform::shell_run(&cmd);
-    if ok {
-        notifier::notify("ePortal Guard", "成功登录");
-    } else {
-        notifier::notify("ePortal Guard", "登录命令执行失败");
-    }
+    Icon::from_rgba(rgba, w, h).expect("fallback icon create")
 }

@@ -1,0 +1,123 @@
+(base) brofea@SchippersMac eportal-guard % tail -n 200 "$HOME/Library/Application Support/eportal-guard/debug.log"
+[1772428372.473][pid:41320][main] process start
+[1772428372.474][pid:41320][core] initializing core process
+[1772428372.474][pid:41320][core] web startup on 127.0.0.1:18888 | ping host=223.5.5.5 interval=5s
+[1772428372.475][pid:41320][core] starting macOS tray watchdog
+[1772428372.475][pid:41320][watchdog] spawning tray-host subprocess
+[1772428372.475][pid:41320][watchdog] tray-host pid=41330 started
+[1772428372.482][pid:41330][main] process start
+[1772428372.482][pid:41330][main] enter tray-host mode
+[1772428372.482][pid:41330][tray-host] startup begin
+[1772428372.482][pid:41330][tray-host] init macOS AppKit begin
+[1772428372.561][pid:41330][tray-host] setActivationPolicy(accessory) => true
+[1772428372.561][pid:41330][tray-host] init macOS AppKit end
+[1772428372.561][pid:41330][tray-host] syncing status from core /status on port 18888
+[1772428372.561][pid:41330][tray] start_tray begin
+[1772428372.683][pid:41330][tray] initial autostart label: 开启开机自启
+[1772428372.706][pid:41330][tray] tray icon build success
+[1772428372.706][pid:41330][tray-host] tray created, entering event loop
+[1772428373.684][pid:41320][core] stopping macOS tray sidecar
+[1772428373.684][pid:41320][core] pkill tray-host subprocess
+[1772428373.706][pid:41320][watchdog] 托盘子进程退出: signal: 15 (SIGTERM)，重试中
+[1772428373.810][pid:41320][main] process end
+[1772428556.659][pid:41680][main] process start
+[1772428556.659][pid:41680][core] initializing core process
+[1772428556.659][pid:41680][core] web startup on 127.0.0.1:18888 | ping host=223.5.5.5 interval=5s
+[1772428556.659][pid:41680][core] starting macOS tray watchdog
+[1772428556.659][pid:41680][watchdog] spawning tray-host subprocess
+[1772428556.660][pid:41680][watchdog] tray-host pid=41682 started
+[1772428556.664][pid:41682][main] process start
+[1772428556.665][pid:41682][main] enter tray-host mode
+[1772428556.665][pid:41682][tray-host] startup begin
+[1772428556.665][pid:41682][tray-host] init macOS AppKit begin
+[1772428556.701][pid:41682][tray-host] setActivationPolicy(accessory) => true
+[1772428556.701][pid:41682][tray-host] init macOS AppKit end
+[1772428556.701][pid:41682][tray-host] syncing status from core /status on port 18888
+[1772428556.701][pid:41682][tray] start_tray begin
+[1772428556.918][pid:41682][tray] initial autostart label: 开启开机自启
+[1772428556.939][pid:41682][tray] tray icon build success
+[1772428556.939][pid:41682][tray-host] tray created, entering event loop
+[1772428570.292][pid:41680][core] stopping macOS tray sidecar
+[1772428570.294][pid:41680][core] pkill tray-host subprocess
+[1772428570.312][pid:41680][watchdog] 托盘子进程退出: signal: 15 (SIGTERM)，重试中
+[1772428570.414][pid:41680][main] process end
+[1772428667.015][pid:41981][main] process start
+[1772428667.016][pid:41981][core] initializing core process
+[1772428667.016][pid:41981][core] web startup on 127.0.0.1:18888 | ping host=223.5.5.5 interval=5s
+[1772428667.016][pid:41981][core] starting macOS tray watchdog
+[1772428667.016][pid:41981][watchdog] spawning tray-host subprocess
+[1772428667.016][pid:41981][watchdog] tray-host pid=41983 started
+[1772428667.020][pid:41983][main] process start
+[1772428667.020][pid:41983][main] enter tray-host mode
+[1772428667.020][pid:41983][tray-host] startup begin
+[1772428667.020][pid:41983][tray-host] init macOS AppKit begin
+[1772428667.048][pid:41983][tray-host] setActivationPolicy(accessory) => true
+[1772428667.048][pid:41983][tray-host] init macOS AppKit end
+[1772428667.048][pid:41983][tray-host] syncing status from core /status on port 18888
+[1772428667.048][pid:41983][tray] start_tray begin
+[1772428667.139][pid:41983][tray] initial autostart label: 开启开机自启
+[1772428667.163][pid:41983][tray] tray icon build success
+[1772428667.163][pid:41983][tray-host] tray created, entering event loop
+[1772428689.121][pid:42063][main] process start
+[1772428689.121][pid:42063][core] initializing core process
+[1772428689.124][pid:42063][core] web startup on 127.0.0.1:18888 | ping host=223.5.5.5 interval=5s
+[1772428689.124][pid:42063][core] starting macOS tray watchdog
+[1772428689.124][pid:42063][watchdog] spawning tray-host subprocess
+[1772428689.124][pid:42063][watchdog] tray-host pid=42076 started
+[1772428689.127][pid:42076][main] process start
+[1772428689.127][pid:42076][main] enter tray-host mode
+[1772428689.128][pid:42076][tray-host] startup begin
+[1772428689.128][pid:42076][tray-host] init macOS AppKit begin
+[1772428689.159][pid:42076][tray-host] setActivationPolicy(accessory) => true
+[1772428689.159][pid:42076][tray-host] init macOS AppKit end
+[1772428689.159][pid:42076][tray-host] syncing status from core /status on port 18888
+[1772428689.159][pid:42076][tray] start_tray begin
+[1772428689.239][pid:42076][tray] initial autostart label: 开启开机自启
+[1772428689.259][pid:42076][tray] tray icon build success
+[1772428689.259][pid:42076][tray-host] tray created, entering event loop
+[1772429079.949][pid:44609][main] process start
+[1772429079.950][pid:44609][core] initializing core process
+[1772429079.955][pid:44609][core] web startup on 127.0.0.1:18888 | ping host=223.5.5.5 interval=5s
+[1772429079.955][pid:44609][core] starting macOS tray watchdog
+[1772429079.955][pid:44609][watchdog] spawning tray-host subprocess
+[1772429079.955][pid:44609][watchdog] tray-host pid=44622 started
+[1772429079.960][pid:44622][main] process start
+[1772429079.960][pid:44622][main] enter tray-host mode
+[1772429079.960][pid:44622][tray-host] startup begin
+[1772429079.960][pid:44622][tray-host] init macOS AppKit begin
+[1772429080.017][pid:44622][tray-host] setActivationPolicy(accessory) => true
+[1772429080.018][pid:44622][tray-host] init macOS AppKit end
+[1772429080.018][pid:44622][tray-host] syncing status from core /status on port 18888
+[1772429080.018][pid:44622][tray] start_tray begin
+[1772429080.268][pid:44622][tray] initial autostart label: 开启开机自启
+[1772429080.268][pid:44622][tray] macOS tray title fallback enabled: EG
+[1772429080.293][pid:44622][tray] tray icon build success
+[1772429080.293][pid:44622][tray] set_visible(true) ok
+[1772429080.293][pid:44622][tray-host] tray created, entering event loop
+[1772429084.511][pid:44609][core] stopping macOS tray sidecar
+[1772429084.511][pid:44609][core] pkill tray-host subprocess
+[1772429084.534][pid:44609][watchdog] 托盘子进程退出: signal: 15 (SIGTERM)，重试中
+[1772429084.639][pid:44609][main] process end
+[1772429112.482][pid:44774][main] process start
+[1772429112.482][pid:44774][core] initializing core process
+[1772429112.483][pid:44774][core] web startup on 127.0.0.1:18888 | ping host=223.5.5.5 interval=5s
+[1772429112.483][pid:44774][core] starting macOS tray watchdog
+[1772429112.483][pid:44774][watchdog] spawning tray-host subprocess
+[1772429112.483][pid:44774][watchdog] tray-host pid=44776 started
+[1772429112.486][pid:44776][main] process start
+[1772429112.486][pid:44776][main] enter tray-host mode
+[1772429112.486][pid:44776][tray-host] startup begin
+[1772429112.486][pid:44776][tray-host] init macOS AppKit begin
+[1772429112.515][pid:44776][tray-host] setActivationPolicy(accessory) => true
+[1772429112.515][pid:44776][tray-host] init macOS AppKit end
+[1772429112.515][pid:44776][tray-host] syncing status from core /status on port 18888
+[1772429112.515][pid:44776][tray] start_tray begin
+[1772429112.603][pid:44776][tray] initial autostart label: 开启开机自启
+[1772429112.603][pid:44776][tray] macOS tray title fallback enabled: EG
+[1772429112.626][pid:44776][tray] tray icon build success
+[1772429112.627][pid:44776][tray] set_visible(true) ok
+[1772429112.627][pid:44776][tray-host] tray created, entering event loop
+(base) brofea@SchippersMac eportal-guard % pgrep -fl "eportal_guard|tray-host|Bartender"
+44774 /Users/brofea/Developer/playground/eportal-guard/target/release/eportal_guard
+44776 /Users/brofea/Developer/playground/eportal-guard/target/release/eportal_guard --tray-host
+(base) brofea@SchippersMac eportal-guard % 

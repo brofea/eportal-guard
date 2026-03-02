@@ -9,17 +9,11 @@ use crate::config;
 use crate::notifier;
 use crate::platform;
 
-pub const TUTORIAL_URL: &str = "https://github.com/curl/curl";
+pub const TUTORIAL_URL: &str = "https://github.com/brofea/eportal-guard";
 const WEB_JS: &str = r#"<script>
 function setStatusText(status, error, ping, tray) {
     const statusEl = document.getElementById('status_text');
-    const errorEl = document.getElementById('error_text');
-    const pingEl = document.getElementById('ping_text');
-    const trayEl = document.getElementById('tray_text');
     if (statusEl) statusEl.textContent = status || '';
-    if (errorEl) errorEl.textContent = error || '';
-    if (pingEl) pingEl.textContent = ping || '';
-    if (trayEl) trayEl.textContent = tray || '';
 }
 
 async function refreshStatus() {
@@ -27,7 +21,7 @@ async function refreshStatus() {
         const resp = await fetch('/status');
         const text = await resp.text();
         const lines = text.split('\n');
-        setStatusText(lines[0] || '', lines[1] || '', lines[2] || '', lines[3] || '');
+        setStatusText(lines[0] || '', '', '', '');
     } catch (_) {}
 }
 
@@ -47,7 +41,15 @@ async function postAction(action, formId) {
             body,
         });
         const text = await resp.text();
-        result.textContent = (resp.ok ? '成功: ' : '失败: ') + text;
+        const content = (resp.ok ? '成功: ' : '失败: ') + text;
+        result.textContent = content;
+        if (resp.ok) {
+            setTimeout(() => {
+                if (result.textContent === content) {
+                    result.textContent = '等待操作';
+                }
+            }, 2000);
+        }
     } catch (e) {
         result.textContent = '请求失败: ' + (e && e.message ? e.message : e);
     }
@@ -56,6 +58,23 @@ async function postAction(action, formId) {
 setInterval(refreshStatus, 2000);
 refreshStatus();
 </script>"#;
+
+const WEB_CSS: &str = r#"<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 20px; color: #1f2937; }
+h2 { margin: 0 0 14px; }
+.panel { max-width: 920px; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; background: #fff; }
+.status-grid { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; margin-bottom: 14px; }
+.status-grid .label { color: #6b7280; }
+#result { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; margin: 10px 0 14px; background: #f9fafb; }
+.section { margin: 14px 0; }
+input, textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #d1d5db; border-radius: 8px; }
+textarea { min-height: 150px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+button { padding: 7px 12px; border: 1px solid #d1d5db; border-radius: 8px; background: #f3f4f6; cursor: pointer; }
+button:hover { background: #e5e7eb; }
+hr { border: 0; border-top: 1px solid #e5e7eb; margin: 14px 0; }
+</style>"#;
 
 #[derive(Clone, Debug)]
 pub struct SharedState {
@@ -177,14 +196,6 @@ fn handle_request(
                 }
             }
         }
-        (&Method::Post, "/open-config") => {
-            let ok = platform::open_path(config_path);
-            let _ = req.respond(Response::from_string(if ok { "ok" } else { "failed" }).with_status_code(200));
-        }
-        (&Method::Post, "/open-curl") => {
-            let ok = platform::open_path(curl_path);
-            let _ = req.respond(Response::from_string(if ok { "ok" } else { "failed" }).with_status_code(200));
-        }
         (&Method::Post, "/manual-login") => {
             let cmd = config::read_curl(curl_path).unwrap_or_default();
             let ok = crate::platform::shell_run(&cmd);
@@ -211,7 +222,6 @@ fn handle_request(
         }
         (&Method::Post, "/quit") => {
             running.store(false, Ordering::SeqCst);
-            notifier::notify("ePortal Guard", "程序退出");
             let _ = req.respond(Response::from_string("bye").with_status_code(200));
         }
         _ => {
@@ -232,36 +242,50 @@ fn render_home(
     let autostart = autostart::is_enabled(exe_path);
 
     format!(
-        "<!doctype html><html><head><meta charset='utf-8'><title>ePortal Guard</title></head><body>\
-        <h2>ePortal Guard</h2>\
-        <p>状态: <span id='status_text'>{}</span></p><p>错误: <span id='error_text'>{}</span></p><p>最近 ping: <span id='ping_text'>{}</span></p><p>托盘: <span id='tray_text'>{}</span></p><p>自启: {}</p>\
-        <div id='result' style='padding:8px;border:1px solid #ddd;margin-bottom:8px;'>等待操作</div>\
-        <form id='cfgForm'>\
-        ping间隔(s): <input name='ping_interval_secs' value='{}'/><br/>\
-        ping服务器: <input name='ping_host' value='{}'/><br/>\
-        Web端口: <input name='web_port' value='{}'/><br/>\
-        <button type='button' onclick=\"postAction('/save','cfgForm')\">保存配置</button></form><hr/>\
-        <form id='curlForm'>\
-        <textarea name='curl' rows='6' cols='80'>{}</textarea><br/>\
-        <button type='button' onclick=\"postAction('/save-curl','curlForm')\">保存cURL</button></form><hr/>\
-        <button type='button' onclick=\"postAction('/manual-login')\">手动登录</button>\
-        <button type='button' onclick=\"postAction('/open-config')\">打开config</button>\
-        <button type='button' onclick=\"postAction('/open-curl')\">粘贴cURL</button>\
-        <button type='button' onclick=\"postAction('/tutorial')\">获取cURL教程</button>\
-        <button type='button' onclick=\"postAction('/toggle-autostart')\">切换开机自启</button>\
-        <button type='button' onclick=\"postAction('/quit')\">退出程序</button>\
-        {}\
+                "<!doctype html><html><head><meta charset='utf-8'><title>ePortal Guard 锐捷校园网自动登录</title>{}</head><body>\
+                <div class='panel'>\
+                <h2>ePortal Guard</h2>\
+                <div class='status-grid'>\
+                    <div class='label'>状态</div><div><span id='status_text'>{}</span></div>\
+                    <div class='label'>开机自启</div><div>{}</div>\
+                </div>\
+                <div id='result'>等待操作</div>\
+                <div class='section'>\
+                    <form id='cfgForm'>\
+                    <div class='row'>\
+                        <div><div>ping间隔(s)</div><input name='ping_interval_secs' value='{}'/></div>\
+                        <div><div>ping服务器</div><input name='ping_host' value='{}'/></div>\
+                        <div><div>Web端口</div><input name='web_port' value='{}'/></div>\
+                    </div>\
+                    <div class='btns'><button type='button' onclick=\"postAction('/save','cfgForm')\">保存配置</button></div>\
+                    </form>\
+                </div>\
+                <hr/>\
+                <div class='section'>\
+                    <form id='curlForm'>\
+                        <div>cURL 命令</div>\
+                        <textarea name='curl'>{}</textarea>\
+                        <div class='btns'><button type='button' onclick=\"postAction('/save-curl','curlForm')\">保存cURL</button></div>\
+                    </form>\
+                </div>\
+                <hr/>\
+                <div class='btns'>\
+                    <button type='button' onclick=\"postAction('/manual-login')\">手动登录</button>\
+                    <button type='button' onclick=\"postAction('/tutorial')\">如何获取cURL</button>\
+                    <button type='button' onclick=\"postAction('/toggle-autostart')\">切换开机自启</button>\
+                    <button type='button' onclick=\"postAction('/quit')\">退出程序</button>\
+                </div>\
+                </div>\
+                {}\
         </body></html>",
+                WEB_CSS,
         html_escape(&s.status_text),
-        html_escape(&s.last_error),
-        html_escape(&s.last_ping_text),
-        html_escape(&s.tray_status_text),
         if autostart { "已开启" } else { "已关闭" },
         cfg.ping_interval_secs,
         html_escape(&cfg.ping_host),
         cfg.web_port,
         html_escape(&curl),
-                WEB_JS,
+        WEB_JS,
     )
 }
 

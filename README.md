@@ -42,6 +42,8 @@ cargo run --release
 
 - `http://127.0.0.1:18888`
 
-## 参考
+## 参考和致谢
 
-https://www.lhcloud.com.cn/archives/13/
+- https://www.lhcloud.com.cn/archives/13/
+
+- [Lucide Icons](https://lucide.dev/) - Licensed under the [ISC License].
