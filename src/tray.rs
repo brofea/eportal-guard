@@ -7,6 +7,9 @@ use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
 use crate::debuglog;
 use crate::platform;
 
+#[cfg(target_os = "linux")]
+use gtk;
+
 pub struct TrayHandle {
     _tray: tray_icon::TrayIcon,
     panel_url: String,
@@ -20,6 +23,10 @@ pub fn start_tray(
     on_exit: Arc<dyn Fn() + Send + Sync>,
 ) -> Result<TrayHandle, String> {
     debuglog::log("tray", "start_tray begin");
+
+    #[cfg(target_os = "linux")]
+    ensure_gtk_initialized()?;
+
     let menu = Menu::new();
     let panel_url = format!("http://127.0.0.1:{}/", web_port);
 
@@ -69,6 +76,12 @@ pub fn start_tray(
         open_panel_item,
         quit_item,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_gtk_initialized() -> Result<(), String> {
+    debuglog::log("tray", "initializing GTK (linux)");
+    gtk::init().map_err(|e| format!("GTK 初始化失败: {}", e))
 }
 
 impl TrayHandle {

@@ -15,7 +15,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use std::{io::Write, net::TcpStream, process::Command};
+use std::{io::Write, net::TcpStream};
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 use config::{ensure_files, ensure_parent_dir};
 use web::SharedState;
@@ -361,6 +363,7 @@ fn set_ping_text(shared_state: &Arc<Mutex<SharedState>>, ping: &str) {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn set_tray_status(shared_state: &Arc<Mutex<SharedState>>, tray_status: &str) {
     if let Ok(mut s) = shared_state.lock() {
         s.tray_status_text = tray_status.to_string();

@@ -5,7 +5,7 @@
 </div>
 
 <div align="center">
-    <img src="https://example.com/logo.png" width="120" />
+    <img src="https://raw.githubusercontent.com/brofea/eportal-guard/refs/heads/main/src/Assets.xcassets/AppIcon.appiconset/256-mac.png" width="120" />
     <h1>ePortal Guard</h1>
     <p>极致轻量的跨平台Web端锐捷校园网自动登录程序</p>
     <p>

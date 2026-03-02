@@ -4,6 +4,7 @@ use std::env;
 use std::fs;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::process::Command;
 
 #[cfg(target_os = "windows")]

@@ -33,7 +33,7 @@ pub fn ensure_files(config_path: &Path, curl_path: &Path) -> io::Result<()> {
         fs::write(config_path, AppConfig::default().to_toml_string())?;
     }
     if !curl_path.exists() {
-        fs::write(curl_path, "curl 'http://example.com'\n")?;
+        fs::write(curl_path, "")?;
     }
     Ok(())
 }
