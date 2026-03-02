@@ -1,13 +1,17 @@
-# ePortal Guard
+<h1 align="center">ePortal Guard</h1>
 
 极致轻量的跨平台Web端锐捷校园网自动登录程序
 
 ## 功能
 
-- 后台定时 `ping` 检测网络（默认每 5 秒 `ping 223.5.5.5`）
-- 链接失败且检测到内网 IP 时，执行 cURL 命令尝试登陆
+- 后台定时 `ping` 检测网络
+- `ping`失败且连接内网时尝试登陆
 - 无GUI，使用系统托盘和本地 Web 后门操作
 - 跨平台（Windows / macOS / Linux）
+
+## 如何使用
+
+
 
 ## 配置目录
 
@@ -42,8 +46,6 @@ cargo run --release
 
 - `http://127.0.0.1:18888`
 
-## 参考和致谢
-
-- https://www.lhcloud.com.cn/archives/13/
+## 致谢
 
 - [Lucide Icons](https://lucide.dev/) - Licensed under the [ISC License].

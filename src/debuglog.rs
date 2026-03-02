@@ -1,6 +1,13 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static CONSOLE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_console_enabled(enabled: bool) {
+    CONSOLE_ENABLED.store(enabled, Ordering::Relaxed);
+}
 
 pub fn log(component: &str, message: &str) {
     let path = crate::paths::app_config_dir().join("debug.log");
@@ -15,7 +22,9 @@ pub fn log(component: &str, message: &str) {
     let pid = std::process::id();
     let line = format!("[{}][pid:{}][{}] {}\n", ts, pid, component, message);
 
-    eprint!("{}", line);
+    if CONSOLE_ENABLED.load(Ordering::Relaxed) {
+        eprint!("{}", line);
+    }
 
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = file.write_all(line.as_bytes());

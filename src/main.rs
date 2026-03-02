@@ -21,8 +21,20 @@ use config::{ensure_files, ensure_parent_dir};
 use web::SharedState;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args
+        .iter()
+        .any(|arg| arg == "-help" || arg == "--help" || arg == "-h")
+    {
+        print_help();
+        return;
+    }
+
+    let enable_console_log = should_enable_console_log(&args);
+    debuglog::set_console_enabled(enable_console_log);
+
     debuglog::log("main", "process start");
-    if std::env::args().any(|arg| arg == "--tray-host") {
+    if args.iter().any(|arg| arg == "--tray-host") {
         debuglog::log("main", "enter tray-host mode");
         if let Err(e) = run_tray_host() {
             debuglog::log("tray-host", &format!("fatal error: {}", e));
@@ -37,6 +49,18 @@ fn main() {
         notifier::notify("ePortal Guard", &format!("启动失败: {}", e));
     }
     debuglog::log("main", "process end");
+}
+
+fn should_enable_console_log(args: &[String]) -> bool {
+    args.iter()
+        .skip(1)
+        .any(|arg| arg != "--tray-host")
+}
+
+fn print_help() {
+    println!(
+        "ePortal Guard 参数列表:\n  -help, --help, -h      显示参数说明\n  --tray-host            macOS 托盘子进程内部参数（无需手动使用）\n\n日志行为:\n  默认启动不输出终端日志；\n  通过终端携带额外参数启动时，终端日志自动开启。"
+    );
 }
 
 fn run() -> Result<(), String> {
