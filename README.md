@@ -1,5 +1,6 @@
 
 
+
 <div align="center">
 
 </div>
@@ -11,7 +12,7 @@
     <p>
         <img src="https://img.shields.io/badge/license-GPL--3.0-orange" />
         <img src="https://img.shields.io/badge/github-brofea-green?logo=github" />
-        <img src="https://img.shields.io/badge/version-0-blue" />
+        <img src="https://img.shields.io/badge/version-0.0.1--alpha-blue" />
     </p>
 
 </div>
