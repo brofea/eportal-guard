@@ -26,6 +26,14 @@
 
 ## 如何使用
 
+1. 在登录页面按下F12打开开发者界面，选择“网络”选项卡，打开“保留日志”与“录制网络日志”
+<img width="610" height="408" alt="614ead6a1d373a49c795f287c147679c" src="https://github.com/user-attachments/assets/5e55c829-b9c9-42cc-8179-3318855d1b5b" />
+
+2. 输入账号密码登录，找到`InterFace.do?method=login`右键，并选择“以cURL格式复制”
+<img width="441" height="260" alt="47d74ff058f0d99b4818091c5432e9ae" src="https://github.com/user-attachments/assets/887011c2-30f6-432c-a10e-ef34b8e40710" />
+
+3. 启动本软件，在浏览器输入`http://127.0.0.1:18888`并粘贴 cURL
+
 ## 配置目录
 
 首次启动自动生成：
@@ -52,10 +60,6 @@ cargo build --release
 ```bash
 cargo run --release
 ```
-
-如桌面环境无系统托盘，可用浏览器访问：
-
-- `http://127.0.0.1:18888`
 
 ## 致谢
 
