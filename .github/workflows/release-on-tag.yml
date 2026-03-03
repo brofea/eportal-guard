@@ -426,7 +426,7 @@ jobs:
           EOF
 
           flatpak-builder --force-clean build-flatpak flatpak-manifest.json
-          flatpak build-export repo build-flatpak --branch="${FLATPAK_BRANCH}"
+          flatpak build-export repo build-flatpak "${FLATPAK_BRANCH}"
           flatpak build-bundle repo "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.flatpak" "${APP_ID}" "${FLATPAK_BRANCH}"
 
       - name: Upload artifacts
