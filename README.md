@@ -40,6 +40,13 @@
 
 3. 启动本软件，在浏览器输入`http://127.0.0.1:18888`粘贴 cURL 并保存
 
+### 注意事项
+
+- 若 macOS 用户提示软件已损坏，将其拖入“应用程序”文件夹并在终端执行如下命令
+```
+sudo xattr -rd com.apple.quarantine /Applications/ePortal\ Guard.app
+```
+
 ## 配置目录
 
 首次启动自动生成：
