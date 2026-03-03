@@ -67,8 +67,15 @@ cargo build --release
 cargo run --release
 ```
 
+## 代办事项
+- [x] macOS 系统托盘
+- [ ] Windows 系统托盘
+- [ ] KDE 系统托盘
+
+
 ## 致谢
 
-- [Lucide Icons](https://lucide.dev/) - Licensed under the [ISC License].
+- [Lucide Icons](https://lucide.dev/) - 基于 [ISC 许可证] 开源
+- [GitHub Copilot](https://github.com/copilot) - 任劳任怨的 Agent
 
 
