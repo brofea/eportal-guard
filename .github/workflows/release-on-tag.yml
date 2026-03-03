@@ -248,6 +248,7 @@ jobs:
           VERSION="${{ steps.vars.outputs.version }}"
           DIST_DIR="${{ steps.vars.outputs.dist_dir }}"
           DEBROOT="$DIST_DIR/debroot"
+          DEB_PACKAGE_NAME="${APP_NAME//_/-}"
 
           rm -rf "$DEBROOT"
           mkdir -p "$DEBROOT/DEBIAN" "$DEBROOT/usr/bin" "$DEBROOT/usr/share/applications" "$DEBROOT/usr/share/icons/hicolor/256x256/apps"
@@ -268,7 +269,7 @@ jobs:
           EOF
 
           cat > "$DEBROOT/DEBIAN/control" << EOF
-          Package: ${APP_NAME}
+          Package: ${DEB_PACKAGE_NAME}
           Version: ${VERSION}
           Section: net
           Priority: optional
@@ -285,6 +286,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
+          RPM_VERSION="${VERSION//-/_}"
           DIST_DIR="${{ steps.vars.outputs.dist_dir }}"
           RPMROOT="$RUNNER_TEMP/rpmbuild"
           PKGROOT="$RUNNER_TEMP/rpm-pkgroot"
@@ -308,12 +310,12 @@ jobs:
           X-Developer=${DEVELOPER_NAME}
           EOF
 
-          TAR_NAME="${APP_NAME}-${VERSION}.tar.gz"
+          TAR_NAME="${APP_NAME}-${RPM_VERSION}.tar.gz"
           tar -czf "$RPMROOT/SOURCES/$TAR_NAME" -C "$PKGROOT" .
 
           cat > "$RPMROOT/SPECS/${APP_NAME}.spec" << EOF
           Name: ${APP_NAME}
-          Version: ${VERSION}
+          Version: ${RPM_VERSION}
           Release: 1%{?dist}
           Summary: Lightweight campus network guard
           License: MIT
@@ -434,16 +436,19 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
+          DEB_PACKAGE_NAME="${APP_NAME//_/-}"
+          RPM_VERSION="${VERSION//-/_}"
           DIST_DIR="${{ steps.vars.outputs.dist_dir }}"
 
           [ -f "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.AppImage" ] || { echo "AppImage missing"; exit 1; }
           [ -f "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.flatpak" ] || { echo "Flatpak missing"; exit 1; }
 
           dpkg-deb -I "$DIST_DIR/${APP_NAME}-${VERSION}-linux-amd64.deb" | grep -q "Version: ${VERSION}" || { echo "DEB version mismatch"; exit 1; }
+          dpkg-deb -I "$DIST_DIR/${APP_NAME}-${VERSION}-linux-amd64.deb" | grep -q "Package: ${DEB_PACKAGE_NAME}" || { echo "DEB package name mismatch"; exit 1; }
           dpkg-deb -I "$DIST_DIR/${APP_NAME}-${VERSION}-linux-amd64.deb" | grep -q "Maintainer: ${DEVELOPER_NAME} <${DEVELOPER_EMAIL}>" || { echo "DEB maintainer mismatch"; exit 1; }
 
           RPM_FILE="$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.rpm"
-          rpm -qp --queryformat '%{VERSION}\n' "$RPM_FILE" | grep -q "^${VERSION}$" || { echo "RPM version mismatch"; exit 1; }
+          rpm -qp --queryformat '%{VERSION}\n' "$RPM_FILE" | grep -q "^${RPM_VERSION}$" || { echo "RPM version mismatch"; exit 1; }
           rpm -qp --queryformat '%{VENDOR}\n' "$RPM_FILE" | grep -q "^${DEVELOPER_NAME}$" || { echo "RPM vendor mismatch"; exit 1; }
 
   release:
