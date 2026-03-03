@@ -232,12 +232,11 @@ fn run_macos_app_event_loop() {
 #[cfg(target_os = "macos")]
 fn start_macos_tray_watchdog(
     running: Arc<AtomicBool>,
-    shared_state: Arc<Mutex<SharedState>>,
+    _shared_state: Arc<Mutex<SharedState>>,
     exe_path: std::path::PathBuf,
 ) {
     thread::spawn(move || {
         while running.load(Ordering::SeqCst) {
-            set_tray_status(&shared_state, "托盘子进程启动中");
             debuglog::log("watchdog", "spawning tray-host subprocess");
             let child = Command::new(&exe_path)
                 .arg("--tray-host")
@@ -247,12 +246,10 @@ fn start_macos_tray_watchdog(
 
             let Ok(mut child) = child else {
                 debuglog::log("watchdog", "spawn tray-host failed");
-                set_tray_status(&shared_state, "托盘子进程启动失败，2s 后重试");
                 thread::sleep(Duration::from_secs(3));
                 continue;
             };
 
-            set_tray_status(&shared_state, "托盘子进程已启动");
             debuglog::log("watchdog", &format!("tray-host pid={} started", child.id()));
 
             let status = child.wait();
@@ -260,7 +257,6 @@ fn start_macos_tray_watchdog(
                 .map(|s| format!("托盘子进程退出: {}，重试中", s))
                 .unwrap_or_else(|_| "托盘子进程退出（状态未知），重试中".to_string());
             debuglog::log("watchdog", &detail);
-            set_tray_status(&shared_state, &detail);
             if running.load(Ordering::SeqCst) {
                 thread::sleep(Duration::from_secs(2));
             }
@@ -310,39 +306,41 @@ fn start_monitor(
             }
 
             let probe = network::ping_probe(&cfg.ping_host);
-            let ping_text = format!(
-                "{} | {}ms | host={}",
-                if probe.ok { "PING 成功" } else { "PING 失败" },
-                probe.elapsed_ms,
-                cfg.ping_host
+            debuglog::log(
+                "monitor",
+                &format!(
+                    "{} | {}ms | host={}",
+                    if probe.ok { "PING 成功" } else { "PING 失败" },
+                    probe.elapsed_ms,
+                    cfg.ping_host
+                ),
             );
-            set_ping_text(&shared_state, &ping_text);
 
             if probe.ok {
-                set_state(&shared_state, "网络正常", "");
+                set_state(&shared_state, "网络正常");
             } else if network::has_private_ip() {
-                set_state(&shared_state, "检测掉线，尝试自动登录", "");
+                set_state(&shared_state, "检测掉线，尝试自动登录");
                 if !network::curl_exists() {
                     let msg = "未检测到系统 curl 命令";
-                    set_state(&shared_state, "自动登录失败", msg);
+                    set_state(&shared_state, "自动登录失败");
                     notifier::notify("ePortal Guard", msg);
                 } else {
                     let cmd = config::read_curl(&curl_path).unwrap_or_default();
                     if cmd.trim().is_empty() {
                         let msg = "curl.txt 为空，无法登录";
-                        set_state(&shared_state, "自动登录失败", msg);
+                        set_state(&shared_state, "自动登录失败");
                         notifier::notify("ePortal Guard", msg);
                     } else if platform::shell_run(&cmd) {
-                        set_state(&shared_state, "自动登录成功", "");
+                        set_state(&shared_state, "自动登录成功");
                         notifier::notify("ePortal Guard", "成功登录");
                     } else {
                         let msg = "curl 命令执行失败";
-                        set_state(&shared_state, "自动登录失败", msg);
+                        set_state(&shared_state, "自动登录失败");
                         notifier::notify("ePortal Guard", msg);
                     }
                 }
             } else {
-                set_state(&shared_state, "未连接内网，跳过登录", "");
+                set_state(&shared_state, "未连接内网，跳过登录");
             }
 
             thread::sleep(Duration::from_secs(cfg.ping_interval_secs.max(1)));
@@ -350,22 +348,11 @@ fn start_monitor(
     });
 }
 
-fn set_state(shared_state: &Arc<Mutex<SharedState>>, status: &str, err: &str) {
+fn set_state(shared_state: &Arc<Mutex<SharedState>>, status: &str) {
     if let Ok(mut s) = shared_state.lock() {
-        s.status_text = status.to_string();
-        s.last_error = err.to_string();
-    }
-}
-
-fn set_ping_text(shared_state: &Arc<Mutex<SharedState>>, ping: &str) {
-    if let Ok(mut s) = shared_state.lock() {
-        s.last_ping_text = ping.to_string();
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn set_tray_status(shared_state: &Arc<Mutex<SharedState>>, tray_status: &str) {
-    if let Ok(mut s) = shared_state.lock() {
-        s.tray_status_text = tray_status.to_string();
+        if s.status_text != status {
+            s.status_text.clear();
+            s.status_text.push_str(status);
+        }
     }
 }

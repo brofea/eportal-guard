@@ -1,0 +1,555 @@
+name: Release on v* tag
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  APP_ID: com.brofea.eportal_guard
+  APP_NAME: eportal_guard
+  APP_DISPLAY_NAME: ePortal Guard
+  DEVELOPER_NAME: brofea
+  DEVELOPER_EMAIL: brofea@users.noreply.github.com
+  PROJECT_URL: ${{ github.server_url }}/${{ github.repository }}
+
+jobs:
+  build_windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Resolve and validate version
+        id: vars
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION=$(awk '
+            /^\[package\]/ { in_pkg=1; next }
+            /^\[/ { in_pkg=0 }
+            in_pkg && $1 == "version" {
+                gsub(/"/, "", $3)
+                print $3
+                exit
+            }
+          ' Cargo.toml)
+
+          if [ -z "$CARGO_VERSION" ]; then
+            echo "Cargo.toml package.version not found"
+            exit 1
+          fi
+
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) != Cargo version ($CARGO_VERSION)"
+            exit 1
+          fi
+
+          echo "version=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Stamp EXE icon and metadata
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          EXE_PATH="target/x86_64-pc-windows-msvc/release/${APP_NAME}.exe"
+
+          if ! command -v magick >/dev/null 2>&1; then
+            choco install imagemagick.tool -y
+          fi
+          if ! command -v rcedit >/dev/null 2>&1; then
+            choco install rcedit -y
+          fi
+
+          magick "src/Assets.xcassets/AppIcon.appiconset/256-mac.png" -define icon:auto-resize=16,32,48,64,128,256 app-icon.ico
+
+          rcedit "$EXE_PATH" \
+            --set-icon app-icon.ico \
+            --set-version-string "CompanyName" "$DEVELOPER_NAME" \
+            --set-version-string "FileDescription" "$APP_DISPLAY_NAME" \
+            --set-version-string "ProductName" "$APP_DISPLAY_NAME" \
+            --set-version-string "LegalCopyright" "© 2026 $DEVELOPER_NAME" \
+            --set-file-version "$VERSION" \
+            --set-product-version "$VERSION"
+
+      - name: Verify EXE metadata
+        shell: pwsh
+        run: |
+          $version = "${{ steps.vars.outputs.version }}"
+          $exe = "target/x86_64-pc-windows-msvc/release/${{ env.APP_NAME }}.exe"
+          $v = (Get-Item $exe).VersionInfo
+          if ($v.FileVersion -notlike "*$version*") { throw "EXE FileVersion mismatch: $($v.FileVersion)" }
+          if ($v.CompanyName -ne "${{ env.DEVELOPER_NAME }}") { throw "EXE CompanyName mismatch: $($v.CompanyName)" }
+
+      - name: Package EXE
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          mkdir -p dist
+          cp "target/x86_64-pc-windows-msvc/release/${APP_NAME}.exe" "dist/${APP_NAME}-${VERSION}-windows-x86_64.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/*.exe
+          if-no-files-found: error
+
+  build_macos:
+    name: Build macOS DMG
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve and validate version
+        id: vars
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION=$(awk '
+            /^\[package\]/ { in_pkg=1; next }
+            /^\[/ { in_pkg=0 }
+            in_pkg && $1 == "version" {
+                gsub(/"/, "", $3)
+                print $3
+                exit
+            }
+          ' Cargo.toml)
+
+          if [ -z "$CARGO_VERSION" ]; then
+            echo "Cargo.toml package.version not found"
+            exit 1
+          fi
+
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) != Cargo version ($CARGO_VERSION)"
+            exit 1
+          fi
+
+          echo "version=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build app bundle
+        shell: bash
+        run: |
+          chmod +x scripts/build_app_bundle.sh
+          ./scripts/build_app_bundle.sh
+
+      - name: Verify app bundle metadata
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          INFO_PLIST="dist/${APP_DISPLAY_NAME}.app/Contents/Info.plist"
+
+          [ -f "$INFO_PLIST" ] || { echo "Info.plist not found"; exit 1; }
+          [ -f "dist/${APP_DISPLAY_NAME}.app/Contents/Resources/AppIcon.png" ] || { echo "AppIcon.png missing"; exit 1; }
+
+          BUNDLE_VER=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$INFO_PLIST")
+          SHORT_VER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$INFO_PLIST")
+          AUTHOR=$(/usr/libexec/PlistBuddy -c "Print NSHumanReadableCopyright" "$INFO_PLIST")
+
+          [ "$BUNDLE_VER" = "$VERSION" ] || { echo "CFBundleVersion mismatch: $BUNDLE_VER"; exit 1; }
+          [ "$SHORT_VER" = "$VERSION" ] || { echo "CFBundleShortVersionString mismatch: $SHORT_VER"; exit 1; }
+          echo "$AUTHOR" | grep -q "$DEVELOPER_NAME" || { echo "Developer info missing in Info.plist"; exit 1; }
+
+      - name: Build DMG
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          APP_BUNDLE="dist/${APP_DISPLAY_NAME}.app"
+          DMG_ROOT="dist/dmg-root"
+          DMG_NAME="dist/${APP_NAME}-${VERSION}-macos.dmg"
+
+          if [ ! -d "$APP_BUNDLE" ]; then
+            echo "App bundle not found: $APP_BUNDLE"
+            exit 1
+          fi
+
+          rm -rf "$DMG_ROOT"
+          mkdir -p "$DMG_ROOT"
+          cp -R "$APP_BUNDLE" "$DMG_ROOT/"
+
+          hdiutil create \
+            -volname "$APP_DISPLAY_NAME" \
+            -srcfolder "$DMG_ROOT" \
+            -ov -format UDZO \
+            "$DMG_NAME"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  build_linux:
+    name: Build Linux Packages
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Resolve and validate version
+        id: vars
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION=$(awk '
+            /^\[package\]/ { in_pkg=1; next }
+            /^\[/ { in_pkg=0 }
+            in_pkg && $1 == "version" {
+                gsub(/"/, "", $3)
+                print $3
+                exit
+            }
+          ' Cargo.toml)
+
+          if [ -z "$CARGO_VERSION" ]; then
+            echo "Cargo.toml package.version not found"
+            exit 1
+          fi
+
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) != Cargo version ($CARGO_VERSION)"
+            exit 1
+          fi
+
+          echo "version=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
+          echo "dist_dir=${GITHUB_WORKSPACE}/dist/linux" >> "$GITHUB_OUTPUT"
+
+      - name: Install Linux packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            rpm \
+            flatpak \
+            flatpak-builder \
+            desktop-file-utils \
+            appstream \
+            libfuse2
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Build AppImage
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          DIST_DIR="${{ steps.vars.outputs.dist_dir }}"
+          APPDIR="$DIST_DIR/${APP_NAME}.AppDir"
+
+          mkdir -p "$DIST_DIR"
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+
+          cp "target/x86_64-unknown-linux-gnu/release/${APP_NAME}" "$APPDIR/usr/bin/${APP_NAME}"
+          chmod +x "$APPDIR/usr/bin/${APP_NAME}"
+
+          cp "src/Assets.xcassets/AppIcon.appiconset/256-mac.png" "$APPDIR/${APP_ID}.png"
+          cp "src/Assets.xcassets/AppIcon.appiconset/256-mac.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png"
+
+          cat > "$APPDIR/${APP_ID}.desktop" << EOF
+          [Desktop Entry]
+          Type=Application
+          Name=${APP_DISPLAY_NAME}
+          Exec=${APP_NAME}
+          Icon=${APP_ID}
+          Terminal=false
+          Categories=Network;Utility;
+          X-AppImage-Version=${VERSION}
+          X-Developer=${DEVELOPER_NAME}
+          EOF
+          cp "$APPDIR/${APP_ID}.desktop" "$APPDIR/usr/share/applications/${APP_ID}.desktop"
+
+          mkdir -p "$APPDIR/usr/share/metainfo"
+          cat > "$APPDIR/usr/share/metainfo/${APP_ID}.metainfo.xml" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <component type="desktop-application">
+            <id>${APP_ID}</id>
+            <name>${APP_DISPLAY_NAME}</name>
+            <summary>Lightweight campus network guard</summary>
+            <developer_name>${DEVELOPER_NAME}</developer_name>
+            <url type="homepage">${PROJECT_URL}</url>
+            <metadata_license>MIT</metadata_license>
+            <project_license>MIT</project_license>
+            <launchable type="desktop-id">${APP_ID}.desktop</launchable>
+            <releases>
+              <release version="${VERSION}" date="2026-03-03"/>
+            </releases>
+          </component>
+          EOF
+
+          cat > "$APPDIR/AppRun" << 'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/eportal_guard" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun"
+
+          curl -L "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -o "$DIST_DIR/appimagetool"
+          chmod +x "$DIST_DIR/appimagetool"
+
+          APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$DIST_DIR/appimagetool" "$APPDIR" "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.AppImage"
+
+      - name: Build DEB
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          DIST_DIR="${{ steps.vars.outputs.dist_dir }}"
+          DEBROOT="$DIST_DIR/debroot"
+
+          rm -rf "$DEBROOT"
+          mkdir -p "$DEBROOT/DEBIAN" "$DEBROOT/usr/bin" "$DEBROOT/usr/share/applications" "$DEBROOT/usr/share/icons/hicolor/256x256/apps"
+
+          cp "target/x86_64-unknown-linux-gnu/release/${APP_NAME}" "$DEBROOT/usr/bin/${APP_NAME}"
+          chmod 755 "$DEBROOT/usr/bin/${APP_NAME}"
+          cp "src/Assets.xcassets/AppIcon.appiconset/256-mac.png" "$DEBROOT/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png"
+
+          cat > "$DEBROOT/usr/share/applications/${APP_ID}.desktop" << EOF
+          [Desktop Entry]
+          Type=Application
+          Name=${APP_DISPLAY_NAME}
+          Exec=${APP_NAME}
+          Icon=${APP_ID}
+          Terminal=false
+          Categories=Network;Utility;
+          X-Developer=${DEVELOPER_NAME}
+          EOF
+
+          cat > "$DEBROOT/DEBIAN/control" << EOF
+          Package: ${APP_NAME}
+          Version: ${VERSION}
+          Section: net
+          Priority: optional
+          Architecture: amd64
+          Maintainer: ${DEVELOPER_NAME} <${DEVELOPER_EMAIL}>
+          Homepage: ${PROJECT_URL}
+          Description: ePortal Guard - lightweight campus network guard
+          Depends: curl, iputils-ping
+          EOF
+
+          dpkg-deb --build "$DEBROOT" "$DIST_DIR/${APP_NAME}-${VERSION}-linux-amd64.deb"
+
+      - name: Build RPM
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          DIST_DIR="${{ steps.vars.outputs.dist_dir }}"
+          RPMROOT="$RUNNER_TEMP/rpmbuild"
+          PKGROOT="$RUNNER_TEMP/rpm-pkgroot"
+
+          rm -rf "$RPMROOT" "$PKGROOT"
+          mkdir -p "$RPMROOT"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+          mkdir -p "$PKGROOT/usr/bin" "$PKGROOT/usr/share/applications" "$PKGROOT/usr/share/icons/hicolor/256x256/apps"
+
+          cp "target/x86_64-unknown-linux-gnu/release/${APP_NAME}" "$PKGROOT/usr/bin/${APP_NAME}"
+          chmod 755 "$PKGROOT/usr/bin/${APP_NAME}"
+          cp "src/Assets.xcassets/AppIcon.appiconset/256-mac.png" "$PKGROOT/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png"
+
+          cat > "$PKGROOT/usr/share/applications/${APP_ID}.desktop" << EOF
+          [Desktop Entry]
+          Type=Application
+          Name=${APP_DISPLAY_NAME}
+          Exec=${APP_NAME}
+          Icon=${APP_ID}
+          Terminal=false
+          Categories=Network;Utility;
+          X-Developer=${DEVELOPER_NAME}
+          EOF
+
+          TAR_NAME="${APP_NAME}-${VERSION}.tar.gz"
+          tar -czf "$RPMROOT/SOURCES/$TAR_NAME" -C "$PKGROOT" .
+
+          cat > "$RPMROOT/SPECS/${APP_NAME}.spec" << EOF
+          Name: ${APP_NAME}
+          Version: ${VERSION}
+          Release: 1%{?dist}
+          Summary: Lightweight campus network guard
+          License: MIT
+          BuildArch: x86_64
+          Source0: %{name}-%{version}.tar.gz
+          URL: ${PROJECT_URL}
+          Vendor: ${DEVELOPER_NAME}
+          Packager: ${DEVELOPER_NAME} <${DEVELOPER_EMAIL}>
+
+          %description
+          ePortal Guard is a lightweight campus network keep-alive tool.
+
+          %prep
+          %setup -q -c -T
+          tar -xzf %{SOURCE0}
+
+          %install
+          mkdir -p %{buildroot}
+          cp -a * %{buildroot}/
+
+          %files
+          /usr/bin/${APP_NAME}
+          /usr/share/applications/${APP_ID}.desktop
+          /usr/share/icons/hicolor/256x256/apps/${APP_ID}.png
+          EOF
+
+          rpmbuild -bb "$RPMROOT/SPECS/${APP_NAME}.spec" --define "_topdir $RPMROOT"
+
+          cp "$RPMROOT/RPMS/x86_64/"*.rpm "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.rpm"
+
+      - name: Build Flatpak bundle
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          DIST_DIR="${{ steps.vars.outputs.dist_dir }}"
+
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
+
+          mkdir -p packaging
+          cat > "packaging/${APP_ID}.desktop" << EOF
+          [Desktop Entry]
+          Type=Application
+          Name=${APP_DISPLAY_NAME}
+          Exec=${APP_NAME}
+          Icon=${APP_ID}
+          Terminal=false
+          Categories=Network;Utility;
+          X-Developer=${DEVELOPER_NAME}
+          EOF
+
+          cat > "packaging/${APP_ID}.metainfo.xml" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <component type="desktop-application">
+            <id>${APP_ID}</id>
+            <name>${APP_DISPLAY_NAME}</name>
+            <summary>Lightweight campus network guard</summary>
+            <developer_name>${DEVELOPER_NAME}</developer_name>
+            <url type="homepage">${PROJECT_URL}</url>
+            <metadata_license>MIT</metadata_license>
+            <project_license>MIT</project_license>
+            <launchable type="desktop-id">${APP_ID}.desktop</launchable>
+            <releases>
+              <release version="${VERSION}" date="2026-03-03"/>
+            </releases>
+          </component>
+          EOF
+
+          cat > flatpak-manifest.json << EOF
+          {
+            "app-id": "${APP_ID}",
+            "runtime": "org.freedesktop.Platform",
+            "runtime-version": "23.08",
+            "sdk": "org.freedesktop.Sdk",
+            "command": "${APP_NAME}",
+            "finish-args": [
+              "--share=network",
+              "--socket=fallback-x11",
+              "--socket=wayland"
+            ],
+            "modules": [
+              {
+                "name": "${APP_NAME}",
+                "buildsystem": "simple",
+                "build-commands": [
+                  "install -D target/x86_64-unknown-linux-gnu/release/${APP_NAME} /app/bin/${APP_NAME}",
+                  "install -D src/Assets.xcassets/AppIcon.appiconset/256-mac.png /app/share/icons/hicolor/256x256/apps/${APP_ID}.png",
+                  "install -D packaging/${APP_ID}.desktop /app/share/applications/${APP_ID}.desktop",
+                  "install -D packaging/${APP_ID}.metainfo.xml /app/share/metainfo/${APP_ID}.metainfo.xml"
+                ],
+                "sources": [
+                  {
+                    "type": "dir",
+                    "path": "."
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          flatpak-builder --force-clean build-flatpak flatpak-manifest.json
+          flatpak build-export repo build-flatpak
+          flatpak build-bundle repo "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.flatpak" "${APP_ID}" "${VERSION}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            dist/linux/*.AppImage
+            dist/linux/*.deb
+            dist/linux/*.rpm
+            dist/linux/*.flatpak
+          if-no-files-found: error
+
+      - name: Verify Linux package metadata
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          DIST_DIR="${{ steps.vars.outputs.dist_dir }}"
+
+          [ -f "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.AppImage" ] || { echo "AppImage missing"; exit 1; }
+          [ -f "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.flatpak" ] || { echo "Flatpak missing"; exit 1; }
+
+          dpkg-deb -I "$DIST_DIR/${APP_NAME}-${VERSION}-linux-amd64.deb" | grep -q "Version: ${VERSION}" || { echo "DEB version mismatch"; exit 1; }
+          dpkg-deb -I "$DIST_DIR/${APP_NAME}-${VERSION}-linux-amd64.deb" | grep -q "Maintainer: ${DEVELOPER_NAME} <${DEVELOPER_EMAIL}>" || { echo "DEB maintainer mismatch"; exit 1; }
+
+          RPM_FILE="$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.rpm"
+          rpm -qp --queryformat '%{VERSION}\n' "$RPM_FILE" | grep -q "^${VERSION}$" || { echo "RPM version mismatch"; exit 1; }
+          rpm -qp --queryformat '%{VENDOR}\n' "$RPM_FILE" | grep -q "^${DEVELOPER_NAME}$" || { echo "RPM vendor mismatch"; exit 1; }
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - build_windows
+      - build_macos
+      - build_linux
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Show assets
+        run: |
+          find release-assets -type f | sort
+
+      - name: Create/Update release and upload files
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: |
+            release-assets/**/*.exe
+            release-assets/**/*.dmg
+            release-assets/**/*.AppImage
+            release-assets/**/*.flatpak
+            release-assets/**/*.deb
+            release-assets/**/*.rpm

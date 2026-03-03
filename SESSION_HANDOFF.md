@@ -7,7 +7,7 @@
 #### Phase 1: Tray UI & Icon Optimization
 - Simplified menu to 2 items only (Control Panel, Exit)
 - Embedded PNG icons via `include_bytes!()`
-  - `globe.png` - tray icon
+  - `earth.png` - tray icon
   - `bolt.png` - control panel menu item (yellow)
   - `log-out.png` - exit menu item (red)
 - Platform fallback for Windows/Linux (graceful degradation)
@@ -66,7 +66,7 @@ ICON_BUILD_GUIDE.md              - Icon management guide
 | Feature | Status | Evidence |
 |---------|--------|----------|
 | Menu simplification | ✅ | 2 items only |
-| Icon loading | ✅ | Log: "tray icon loaded from embedded globe.png" |
+| Icon loading | ✅ | Log: "tray icon loaded from embedded earth.png" |
 | Quit popup fix | ✅ | No system dialog on exit |
 | Web simplification | ✅ | Only status + autostart toggle visible |
 | Parameter system | ✅ | `-help` shows Chinese help text |

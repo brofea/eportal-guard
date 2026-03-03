@@ -1,19 +1,25 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static CONSOLE_ENABLED: AtomicBool = AtomicBool::new(false);
+static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_console_enabled(enabled: bool) {
     CONSOLE_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
 pub fn log(component: &str, message: &str) {
-    let path = crate::paths::app_config_dir().join("debug.log");
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
+    let path = LOG_PATH.get_or_init(|| {
+        let path = crate::paths::app_config_dir().join("debug.log");
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        path
+    });
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

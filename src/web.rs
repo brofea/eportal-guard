@@ -11,7 +11,7 @@ use crate::platform;
 
 pub const TUTORIAL_URL: &str = "https://github.com/brofea/eportal-guard";
 const WEB_JS: &str = r#"<script>
-function setStatusText(status, error, ping, tray) {
+function setStatusText(status) {
     const statusEl = document.getElementById('status_text');
     if (statusEl) statusEl.textContent = status || '';
 }
@@ -20,8 +20,7 @@ async function refreshStatus() {
     try {
         const resp = await fetch('/status');
         const text = await resp.text();
-        const lines = text.split('\n');
-        setStatusText(lines[0] || '', '', '', '');
+        setStatusText(text || '');
     } catch (_) {}
 }
 
@@ -79,18 +78,12 @@ hr { border: 0; border-top: 1px solid #e5e7eb; margin: 14px 0; }
 #[derive(Clone, Debug)]
 pub struct SharedState {
     pub status_text: String,
-    pub last_error: String,
-    pub last_ping_text: String,
-    pub tray_status_text: String,
 }
 
 impl Default for SharedState {
     fn default() -> Self {
         Self {
             status_text: "初始化中".to_string(),
-            last_error: String::new(),
-            last_ping_text: "尚无 ping 结果".to_string(),
-            tray_status_text: "托盘状态未知".to_string(),
         }
     }
 }
@@ -144,10 +137,7 @@ fn handle_request(
         }
         (&Method::Get, "/status") => {
             let s = state.lock().map(|v| v.clone()).unwrap_or_default();
-            let body = format!(
-                "{}\n{}\n{}\n{}",
-                s.status_text, s.last_error, s.last_ping_text, s.tray_status_text
-            );
+            let body = s.status_text;
             let header = Header::from_bytes(
                 b"Content-Type".as_slice(),
                 b"text/plain; charset=utf-8".as_slice(),

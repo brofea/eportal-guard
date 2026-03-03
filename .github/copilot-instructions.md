@@ -185,7 +185,7 @@ Windows 需保持：
 #### 阶段 1：托盘 UI 和图标优化
 - ✅ 托盘菜单简化：仅保留"打开控制面板"和"退出程序"两项
 - ✅ 菜单项图标化：使用 bolt.png（黄色）和 log-out.png（红色）
-- ✅ 托盘图标替换：从内置默认图标改为 globe.png（地球图标）
+- ✅ 托盘图标替换：从内置默认图标改为 earth.png（地球图标）
 - ✅ PNG 图标内嵌：通过 `include_bytes!()` 在 tray.rs 中加载
 - ✅ 跨平台兼容：Windows/Linux 降级到无图标模式正常运作
 - **核心改动**：[src/tray.rs](src/tray.rs) - 完全重作菜单架构为 IconMenuItem 模式
@@ -237,7 +237,7 @@ Windows 需保持：
 | 功能 | 状态 | 验证方式 |
 |------|------|--------|
 | 托盘菜单简化 | ✅ | 运行后检查菜单只有 2 项 |
-| 图标加载 | ✅ | 日志输出 "tray icon loaded from embedded globe.png" |
+| 图标加载 | ✅ | 日志输出 "tray icon loaded from embedded earth.png" |
 | 退出弹窗修复 | ✅ | 运行后关闭，无系统对话框弹出 |
 | Web 页面简化 | ✅ | 打开 127.0.0.1:18888，无错误/ping/托盘列 |
 | 参数系统 | ✅ | `./target/release/eportal_guard -help` 显示帮助文本 |

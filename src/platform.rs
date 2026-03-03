@@ -77,11 +77,11 @@ fn normalize_command(input: &str) -> String {
 
     let starts_with_curl = lines[0] == "curl" || lines[0].starts_with("curl ");
     if starts_with_curl {
-        let mut joined = lines.join(" ");
-        while joined.contains("  ") {
-            joined = joined.replace("  ", " ");
-        }
-        return joined;
+        return lines
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
     }
 
     if lines.len() > 1 {
