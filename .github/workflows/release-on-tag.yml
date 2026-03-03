@@ -351,6 +351,7 @@ jobs:
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
           DIST_DIR="${{ steps.vars.outputs.dist_dir }}"
+          FLATPAK_BRANCH="stable"
 
           flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak --user install -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
@@ -425,8 +426,8 @@ jobs:
           EOF
 
           flatpak-builder --force-clean build-flatpak flatpak-manifest.json
-          flatpak build-export repo build-flatpak
-          flatpak build-bundle repo "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.flatpak" "${APP_ID}" "${VERSION}"
+          flatpak build-export repo build-flatpak --branch="${FLATPAK_BRANCH}"
+          flatpak build-bundle repo "$DIST_DIR/${APP_NAME}-${VERSION}-linux-x86_64.flatpak" "${APP_ID}" "${FLATPAK_BRANCH}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
