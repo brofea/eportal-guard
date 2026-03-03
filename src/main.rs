@@ -8,6 +8,7 @@ mod notifier;
 mod paths;
 mod platform;
 mod single_instance;
+#[cfg(target_os = "macos")]
 mod tray;
 mod web;
 
@@ -109,32 +110,16 @@ fn run() -> Result<(), String> {
         curl_path.clone(),
     );
 
-    #[cfg(not(target_os = "macos"))]
-    let on_exit = {
-        let running_for_exit = Arc::clone(&running);
-        Arc::new(move || {
-            running_for_exit.store(false, Ordering::SeqCst);
-        })
-    };
-
     #[cfg(target_os = "macos")]
     debuglog::log("core", "starting macOS tray watchdog");
     #[cfg(target_os = "macos")]
     start_macos_tray_watchdog(Arc::clone(&running), Arc::clone(&shared_state), exe_path.clone());
 
-    #[cfg(not(target_os = "macos"))]
-    let tray = match tray::start_tray(cfg.web_port, on_exit) {
-        Ok(v) => Some(v),
-        Err(e) => {
-            set_state(&shared_state, "托盘启动失败，已降级为 Web 模式", &e);
-            None
-        }
-    };
-
     #[cfg(target_os = "macos")]
     let tray: Option<tray::TrayHandle> = None;
 
     while running.load(Ordering::SeqCst) {
+        #[cfg(target_os = "macos")]
         if let Some(tray) = &tray {
             tray.process_events();
         }
@@ -150,8 +135,14 @@ fn run() -> Result<(), String> {
 }
 
 fn run_tray_host() -> Result<(), String> {
-    debuglog::log("tray-host", "startup begin");
+    #[cfg(not(target_os = "macos"))]
+    {
+        return Err("--tray-host 仅用于 macOS".to_string());
+    }
+
     #[cfg(target_os = "macos")]
+    {
+    debuglog::log("tray-host", "startup begin");
     init_macos_appkit();
 
     let config_path = paths::config_path();
@@ -172,20 +163,9 @@ fn run_tray_host() -> Result<(), String> {
     .map_err(|e| format!("托盘初始化失败: {}", e))?;
     debuglog::log("tray-host", "tray created, entering event loop");
 
-    #[cfg(target_os = "macos")]
-    {
         tray.install_macos_event_handlers();
         run_macos_app_event_loop();
-        return Ok(());
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        while running.load(Ordering::SeqCst) {
-            tray.process_events();
-            thread::sleep(Duration::from_millis(200));
-        }
-        return Ok(());
+        Ok(())
     }
 }
 

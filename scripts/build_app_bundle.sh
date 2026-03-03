@@ -8,11 +8,14 @@ PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 APP_NAME="ePortal Guard"
 BUNDLE_DIR="$PROJECT_ROOT/dist/$APP_NAME.app"
 EXECUTABLE_NAME="eportal_guard"
-DEVELOPER_NAME="Brofea"
+DEV_NAME="${DEVELOPER_NAME:-brofea}"
 
 RESOURCES_DIR="$BUNDLE_DIR/Contents/Resources"
 MACOS_DIR="$BUNDLE_DIR/Contents/MacOS"
 
+VERSION="${APP_VERSION:-}"
+
+if [ -z "$VERSION" ]; then
 VERSION=$(awk '
     /^\[package\]/ { in_pkg=1; next }
     /^\[/ { in_pkg=0 }
@@ -22,6 +25,7 @@ VERSION=$(awk '
         exit
     }
 ' "$PROJECT_ROOT/Cargo.toml")
+fi
 
 if [ -z "$VERSION" ]; then
     echo "❌ 无法从 Cargo.toml 读取 package.version"
@@ -73,13 +77,13 @@ cat > "$BUNDLE_DIR/Contents/Info.plist" << EOF
     <key>CFBundleIdentifier</key>
     <string>com.brofea.eportal-guard</string>
     <key>CFBundleGetInfoString</key>
-    <string>ePortal Guard by ${DEVELOPER_NAME}</string>
+    <string>ePortal Guard by ${DEV_NAME}</string>
     <key>CFBundleVersion</key>
     <string>$VERSION</string>
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>NSHumanReadableCopyright</key>
-    <string>© 2026 ${DEVELOPER_NAME}</string>
+    <string>© 2026 ${DEV_NAME}</string>
     <key>CFBundleExecutable</key>
     <string>eportal_guard</string>
     <key>CFBundlePackageType</key>
