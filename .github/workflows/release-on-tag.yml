@@ -373,6 +373,13 @@ jobs:
             <id>${APP_ID}</id>
             <name>${APP_DISPLAY_NAME}</name>
             <summary>Lightweight campus network guard</summary>
+            <description>
+              <p>
+                ePortal Guard is a lightweight campus network keep-alive tool.
+                It monitors connectivity and runs user-provided curl login commands
+                when network access needs recovery.
+              </p>
+            </description>
             <developer_name>${DEVELOPER_NAME}</developer_name>
             <url type="homepage">${PROJECT_URL}</url>
             <metadata_license>MIT</metadata_license>
