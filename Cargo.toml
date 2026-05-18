@@ -11,7 +11,6 @@ tiny_http = "0.12"
 notify-rust = { version = "4", default-features = false, features = ["z"] }
 
 [profile.release]
-panic = "abort"
 lto = true
 opt-level = "z"
 codegen-units = 1

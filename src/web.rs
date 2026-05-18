@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -6,6 +7,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::autostart;
 use crate::config;
+use crate::debuglog;
 use crate::notifier;
 use crate::platform;
 
@@ -369,7 +371,16 @@ pub fn start_web_server(
         };
 
         for req in server.incoming_requests() {
-            handle_request(req, &state, &running, &config_path, &curl_path, &exe_path);
+            let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                handle_request(req, &state, &running, &config_path, &curl_path, &exe_path);
+            }));
+
+            if let Err(payload) = result {
+                debuglog::log(
+                    "web",
+                    &format!("request handler panicked: {}", panic_message(payload.as_ref())),
+                );
+            }
         }
     });
 }
@@ -436,8 +447,8 @@ fn handle_request(
             }
             match config::save_config(config_path, &cfg) {
                 Ok(_) => {
-                    notifier::notify("ePortal Guard", "配置更新成功");
                     let _ = req.respond(Response::from_string("saved").with_status_code(200));
+                    notifier::notify("ePortal Guard", "配置更新成功");
                 }
                 Err(e) => {
                     let _ = req.respond(
@@ -451,8 +462,8 @@ fn handle_request(
             let content = form.get("curl").cloned().unwrap_or_default();
             match config::write_curl(curl_path, &content) {
                 Ok(_) => {
-                    notifier::notify("ePortal Guard", "cURL 已更新");
                     let _ = req.respond(Response::from_string("curl saved").with_status_code(200));
+                    notifier::notify("ePortal Guard", "cURL 已更新");
                 }
                 Err(e) => {
                     let _ = req.respond(
@@ -465,12 +476,12 @@ fn handle_request(
         (&Method::Post, "/manual-login") => {
             let cmd = config::read_curl(curl_path).unwrap_or_default();
             let ok = crate::platform::shell_run(&cmd);
-            if ok {
-                notifier::notify("ePortal Guard", "手动登录执行完成");
-            }
             let _ = req.respond(
                 Response::from_string(if ok { "ok" } else { "failed" }).with_status_code(200),
             );
+            if ok {
+                notifier::notify("ePortal Guard", "手动登录执行完成");
+            }
         }
         (&Method::Post, "/tutorial") => {
             let ok = platform::open_url(TUTORIAL_URL);
@@ -497,6 +508,16 @@ fn handle_request(
         _ => {
             let _ = req.respond(Response::from_string("not found").with_status_code(404));
         }
+    }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        message
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.as_str()
+    } else {
+        "unknown panic payload"
     }
 }
 
