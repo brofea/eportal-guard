@@ -2,7 +2,7 @@
 <div align="center">
     <img src="https://raw.githubusercontent.com/brofea/eportal-guard/refs/heads/main/src/Assets.xcassets/AppIcon.appiconset/256-mac.png" width="120" />
     <h1>ePortal Guard</h1>
-    <p>极致轻量的跨平台Web端锐捷校园网自动登录程序</p>
+    <p>轻量化的跨平台Web端锐捷校园网自动登录程序</p>
     <p>
         <a href="https://www.gnu.org/licenses/gpl-3.0.en.html">
             <img src="https://img.shields.io/badge/license-GPL--3.0-orange" />
@@ -22,8 +22,8 @@
 ## 功能
 
 - 后台定时 `ping` 检测网络
-- `ping`失败且连接内网时尝试登陆
-- 无GUI，使用系统托盘和本地 Web 后门操作
+- `ping` 失败且连接内网时尝试登陆
+- 无系统托盘，使用本地 Web 控制台操作
 - 跨平台（Windows / macOS / Linux）
 
 ## 如何使用
@@ -74,15 +74,7 @@ cargo build --release
 cargo run --release
 ```
 
-## 代办事项
-- [x] macOS 系统托盘
-- [ ] Windows 系统托盘
-- [ ] KDE 系统托盘
-
-
 ## 致谢
 
-- [Lucide Icons](https://lucide.dev/) - 基于 [ISC 许可证] 开源
 - [GitHub Copilot](https://github.com/copilot) - 任劳任怨的 Agent
-
 

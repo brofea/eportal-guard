@@ -8,17 +8,12 @@ mod notifier;
 mod paths;
 mod platform;
 mod single_instance;
-#[cfg(target_os = "macos")]
-mod tray;
 mod web;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use std::{io::Write, net::TcpStream};
-#[cfg(target_os = "macos")]
-use std::process::Command;
 
 use config::{ensure_files, ensure_parent_dir};
 use web::SharedState;
@@ -37,16 +32,6 @@ fn main() {
     debuglog::set_console_enabled(enable_console_log);
 
     debuglog::log("main", "process start");
-    if args.iter().any(|arg| arg == "--tray-host") {
-        debuglog::log("main", "enter tray-host mode");
-        if let Err(e) = run_tray_host() {
-            debuglog::log("tray-host", &format!("fatal error: {}", e));
-            notifier::notify("ePortal Guard Tray", &format!("托盘子进程启动失败: {}", e));
-        }
-        debuglog::log("main", "tray-host process end");
-        return;
-    }
-
     if let Err(e) = run() {
         debuglog::log("main", &format!("fatal error: {}", e));
         notifier::notify("ePortal Guard", &format!("启动失败: {}", e));
@@ -55,14 +40,12 @@ fn main() {
 }
 
 fn should_enable_console_log(args: &[String]) -> bool {
-    args.iter()
-        .skip(1)
-        .any(|arg| arg != "--tray-host")
+    args.len() > 1
 }
 
 fn print_help() {
     println!(
-        "ePortal Guard 参数列表:\n  -help, --help, -h      显示参数说明\n  --tray-host            macOS 托盘子进程内部参数（无需手动使用）\n\n日志行为:\n  默认启动不输出终端日志；\n  通过终端携带额外参数启动时，终端日志自动开启。"
+        "ePortal Guard 参数列表:\n  -help, --help, -h      显示参数说明\n\n日志行为:\n  默认启动不输出终端日志；\n  通过终端携带额外参数启动时，终端日志自动开启。"
     );
 }
 
@@ -110,161 +93,11 @@ fn run() -> Result<(), String> {
         curl_path.clone(),
     );
 
-    #[cfg(target_os = "macos")]
-    debuglog::log("core", "starting macOS tray watchdog");
-    #[cfg(target_os = "macos")]
-    start_macos_tray_watchdog(Arc::clone(&running), Arc::clone(&shared_state), exe_path.clone());
-
-    #[cfg(target_os = "macos")]
-    let tray: Option<tray::TrayHandle> = None;
-
     while running.load(Ordering::SeqCst) {
-        #[cfg(target_os = "macos")]
-        if let Some(tray) = &tray {
-            tray.process_events();
-        }
         thread::sleep(Duration::from_millis(300));
     }
 
-    #[cfg(target_os = "macos")]
-    debuglog::log("core", "stopping macOS tray sidecar");
-    #[cfg(target_os = "macos")]
-    stop_macos_tray_sidecar();
-
     Ok(())
-}
-
-fn run_tray_host() -> Result<(), String> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        return Err("--tray-host 仅用于 macOS".to_string());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-    debuglog::log("tray-host", "startup begin");
-    init_macos_appkit();
-
-    let config_path = paths::config_path();
-    let cfg = config::load_config(&config_path);
-    let port = cfg.web_port;
-    debuglog::log("tray-host", &format!("tray host using web port {}", port));
-
-    let running = Arc::new(AtomicBool::new(true));
-
-    let running_for_exit = Arc::clone(&running);
-    let on_exit = Arc::new(move || {
-        running_for_exit.store(false, Ordering::SeqCst);
-        let _ = http_post(port, "/quit", "");
-        std::process::exit(0);
-    });
-
-    let tray = tray::start_tray(port, on_exit)
-    .map_err(|e| format!("托盘初始化失败: {}", e))?;
-    debuglog::log("tray-host", "tray created, entering event loop");
-
-        tray.install_macos_event_handlers();
-        run_macos_app_event_loop();
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn init_macos_appkit() {
-    debuglog::log("tray-host", "init macOS AppKit begin");
-    if let Some(mtm) = objc2::MainThreadMarker::new() {
-        let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-        app.finishLaunching();
-        let ok = app.setActivationPolicy(objc2_app_kit::NSApplicationActivationPolicy::Accessory);
-        debuglog::log("tray-host", &format!("setActivationPolicy(Accessory) => {}", ok));
-
-        app.activate();
-        debuglog::log("tray-host", "app.activate() called");
-
-        let policy = app.activationPolicy().0;
-        let active = app.isActive();
-        let running = app.isRunning();
-        debuglog::log(
-            "tray-host",
-            &format!(
-                "app state after init: policy={} active={} running={}",
-                policy, active, running
-            ),
-        );
-    } else {
-        debuglog::log("tray-host", "MainThreadMarker unavailable");
-    }
-    debuglog::log("tray-host", "init macOS AppKit end");
-}
-
-#[cfg(target_os = "macos")]
-fn run_macos_app_event_loop() {
-    if let Some(mtm) = objc2::MainThreadMarker::new() {
-        let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-        debuglog::log("tray-host", "enter NSApplication.run() main loop");
-        app.run();
-        debuglog::log("tray-host", "NSApplication.run() returned");
-    } else {
-        debuglog::log("tray-host", "MainThreadMarker unavailable before app.run()");
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn start_macos_tray_watchdog(
-    running: Arc<AtomicBool>,
-    _shared_state: Arc<Mutex<SharedState>>,
-    exe_path: std::path::PathBuf,
-) {
-    thread::spawn(move || {
-        while running.load(Ordering::SeqCst) {
-            debuglog::log("watchdog", "spawning tray-host subprocess");
-            let child = Command::new(&exe_path)
-                .arg("--tray-host")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-
-            let Ok(mut child) = child else {
-                debuglog::log("watchdog", "spawn tray-host failed");
-                thread::sleep(Duration::from_secs(3));
-                continue;
-            };
-
-            debuglog::log("watchdog", &format!("tray-host pid={} started", child.id()));
-
-            let status = child.wait();
-            let detail = status
-                .map(|s| format!("托盘子进程退出: {}，重试中", s))
-                .unwrap_or_else(|_| "托盘子进程退出（状态未知），重试中".to_string());
-            debuglog::log("watchdog", &detail);
-            if running.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_secs(2));
-            }
-        }
-    });
-}
-
-#[cfg(target_os = "macos")]
-fn stop_macos_tray_sidecar() {
-    debuglog::log("core", "pkill tray-host subprocess");
-    let _ = Command::new("pkill")
-        .args(["-f", "eportal_guard --tray-host"])
-        .status();
-}
-
-fn http_post(port: u16, path: &str, body: &str) -> bool {
-    let mut stream = match TcpStream::connect(("127.0.0.1", port)) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-
-    let req = format!(
-        "POST {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        path,
-        body.len(),
-        body
-    );
-    stream.write_all(req.as_bytes()).is_ok()
 }
 
 fn start_monitor(
@@ -290,7 +123,11 @@ fn start_monitor(
                 "monitor",
                 &format!(
                     "{} | {}ms | host={}",
-                    if probe.ok { "PING 成功" } else { "PING 失败" },
+                    if probe.ok {
+                        "PING 成功"
+                    } else {
+                        "PING 失败"
+                    },
                     probe.elapsed_ms,
                     cfg.ping_host
                 ),
