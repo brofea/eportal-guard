@@ -108,7 +108,7 @@ jobs:
             -output "target/universal-apple-darwin/release/${APP_NAME}"
 
           file "target/universal-apple-darwin/release/${APP_NAME}"
-          lipo -verify_arch x86_64 arm64 "target/universal-apple-darwin/release/${APP_NAME}"
+          lipo "target/universal-apple-darwin/release/${APP_NAME}" -verify_arch x86_64 arm64
 
       - name: Build app bundle
         shell: bash
@@ -138,7 +138,7 @@ jobs:
           echo "$AUTHOR" | grep -q "$DEVELOPER_NAME" || { echo "Developer info missing in Info.plist"; exit 1; }
 
           file "$APP_EXECUTABLE"
-          lipo -verify_arch x86_64 arm64 "$APP_EXECUTABLE"
+          lipo "$APP_EXECUTABLE" -verify_arch x86_64 arm64
           "$APP_EXECUTABLE" --help >/dev/null
           codesign --verify --deep --strict --verbose=2 "dist/${APP_DISPLAY_NAME}.app"
 
