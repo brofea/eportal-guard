@@ -35,19 +35,30 @@ fi
 echo "🏗️  构建 macOS App Bundle..."
 echo "🏷️  版本号: $VERSION"
 
-# 1. 编译 Rust 二进制文件
-echo "1️⃣  编译 Rust 发布版本..."
+# 1. 准备 Rust 二进制文件
+echo "1️⃣  准备 Rust 发布版本..."
 cd "$PROJECT_ROOT"
-cargo build --release 2>&1 | grep -E "(Compiling|Finished|error)" || true
+if [ -n "${MACOS_BINARY_PATH:-}" ]; then
+    if [ ! -f "$MACOS_BINARY_PATH" ]; then
+        echo "❌ 指定的 MACOS_BINARY_PATH 不存在: $MACOS_BINARY_PATH"
+        exit 1
+    fi
+    RELEASE_BINARY="$MACOS_BINARY_PATH"
+    echo "  ✓ 使用外部二进制: $RELEASE_BINARY"
+else
+    cargo build --release
+    RELEASE_BINARY="$PROJECT_ROOT/target/release/$EXECUTABLE_NAME"
+fi
 
 # 2. 创建 App Bundle 目录结构
 echo "2️⃣  创建 App Bundle 目录结构..."
+rm -rf "$BUNDLE_DIR"
 mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
 
 # 3. 复制二进制文件
 echo "3️⃣  复制可执行文件..."
-cp "$PROJECT_ROOT/target/release/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
+cp "$RELEASE_BINARY" "$MACOS_DIR/$EXECUTABLE_NAME"
 chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
 
 # 4. 转换并复制应用图标
@@ -100,9 +111,20 @@ cat > "$BUNDLE_DIR/Contents/Info.plist" << EOF
 </plist>
 EOF
 
-# 6. 验证构建结果
-echo "6️⃣  验证构建结果..."
+# 6. 对 App Bundle 做 ad-hoc 签名，减少 Gatekeeper/转置路径下的启动问题
+echo "6️⃣  签名 App Bundle..."
+if command -v codesign >/dev/null 2>&1; then
+    codesign --force --deep --sign - "$BUNDLE_DIR"
+    echo "  ✓ ad-hoc 签名完成"
+else
+    echo "  ⚠️  当前环境没有 codesign，跳过签名"
+fi
+
+# 7. 验证构建结果
+echo "7️⃣  验证构建结果..."
 if [ -f "$MACOS_DIR/$EXECUTABLE_NAME" ] && [ -f "$BUNDLE_DIR/Contents/Info.plist" ]; then
+    file "$MACOS_DIR/$EXECUTABLE_NAME"
+    "$MACOS_DIR/$EXECUTABLE_NAME" --help >/dev/null
     echo "✅ App Bundle 构建成功！"
     echo "🏷️  应用版本: $VERSION"
     echo ""

@@ -92,20 +92,41 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Build universal macOS binary
+        shell: bash
+        run: |
+          cargo build --release --target x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            "target/x86_64-apple-darwin/release/${APP_NAME}" \
+            "target/aarch64-apple-darwin/release/${APP_NAME}" \
+            -output "target/universal-apple-darwin/release/${APP_NAME}"
+
+          file "target/universal-apple-darwin/release/${APP_NAME}"
+          lipo -verify_arch x86_64 arm64 "target/universal-apple-darwin/release/${APP_NAME}"
 
       - name: Build app bundle
         shell: bash
         run: |
           chmod +x scripts/build_app_bundle.sh
-          APP_VERSION="${GITHUB_REF_NAME#v}" ./scripts/build_app_bundle.sh
+          APP_VERSION="${GITHUB_REF_NAME#v}" \
+          MACOS_BINARY_PATH="target/universal-apple-darwin/release/${APP_NAME}" \
+            ./scripts/build_app_bundle.sh
 
       - name: Verify app bundle metadata
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           INFO_PLIST="dist/${APP_DISPLAY_NAME}.app/Contents/Info.plist"
+          APP_EXECUTABLE="dist/${APP_DISPLAY_NAME}.app/Contents/MacOS/${APP_NAME}"
 
           [ -f "$INFO_PLIST" ] || { echo "Info.plist not found"; exit 1; }
+          [ -f "$APP_EXECUTABLE" ] || { echo "App executable missing"; exit 1; }
           [ -f "dist/${APP_DISPLAY_NAME}.app/Contents/Resources/AppIcon.png" ] || { echo "AppIcon.png missing"; exit 1; }
 
           BUNDLE_VER=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$INFO_PLIST")
@@ -115,6 +136,11 @@ jobs:
           [ "$BUNDLE_VER" = "$VERSION" ] || { echo "CFBundleVersion mismatch: $BUNDLE_VER"; exit 1; }
           [ "$SHORT_VER" = "$VERSION" ] || { echo "CFBundleShortVersionString mismatch: $SHORT_VER"; exit 1; }
           echo "$AUTHOR" | grep -q "$DEVELOPER_NAME" || { echo "Developer info missing in Info.plist"; exit 1; }
+
+          file "$APP_EXECUTABLE"
+          lipo -verify_arch x86_64 arm64 "$APP_EXECUTABLE"
+          "$APP_EXECUTABLE" --help >/dev/null
+          codesign --verify --deep --strict --verbose=2 "dist/${APP_DISPLAY_NAME}.app"
 
       - name: Build DMG
         shell: bash
