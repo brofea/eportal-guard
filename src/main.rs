@@ -10,10 +10,11 @@ mod platform;
 mod single_instance;
 mod web;
 
+use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use config::{ensure_files, ensure_parent_dir};
 use web::SharedState;
@@ -57,11 +58,15 @@ fn run() -> Result<(), String> {
     ensure_parent_dir(&config_path).map_err(|e| e.to_string())?;
     ensure_files(&config_path, &curl_path).map_err(|e| e.to_string())?;
 
-    let _lock = match single_instance::SingleInstance::acquire(&lock_path) {
+    let cfg = config::load_config(&config_path);
+    let _lock = match single_instance::SingleInstance::acquire(&lock_path, cfg.web_port) {
         Ok(v) => v,
         Err(_) => {
             debuglog::log("core", "single-instance acquire failed");
-            return Err("检测到程序已在运行（单实例锁失败）".to_string());
+            let port =
+                single_instance::SingleInstance::read_web_port(&lock_path).unwrap_or(cfg.web_port);
+            open_web_panel(port, "existing instance");
+            return Ok(());
         }
     };
 
@@ -69,7 +74,6 @@ fn run() -> Result<(), String> {
     let shared_state = Arc::new(Mutex::new(SharedState::default()));
     let running = Arc::new(AtomicBool::new(true));
 
-    let cfg = config::load_config(&config_path);
     debuglog::log(
         "core",
         &format!(
@@ -86,6 +90,13 @@ fn run() -> Result<(), String> {
         cfg.web_port,
     );
 
+    if config::read_curl(&curl_path)
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        open_web_panel(cfg.web_port, "empty curl");
+    }
+
     start_monitor(
         Arc::clone(&running),
         Arc::clone(&shared_state),
@@ -98,6 +109,25 @@ fn run() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn open_web_panel(port: u16, reason: &str) {
+    let url = format!("http://127.0.0.1:{}/", port);
+    debuglog::log("core", &format!("open web panel: {} | {}", url, reason));
+    wait_for_web_panel(port);
+    if !platform::open_url(&url) {
+        debuglog::log("core", &format!("open web panel failed: {}", url));
+    }
+}
+
+fn wait_for_web_panel(port: u16) {
+    let deadline = Instant::now() + Duration::from_millis(1200);
+    while Instant::now() < deadline {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn start_monitor(

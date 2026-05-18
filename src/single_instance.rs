@@ -9,8 +9,8 @@ pub struct SingleInstance {
 }
 
 impl SingleInstance {
-    pub fn acquire(lock_path: &Path) -> io::Result<Self> {
-        match open_new_lock(lock_path) {
+    pub fn acquire(lock_path: &Path, web_port: u16) -> io::Result<Self> {
+        match open_new_lock(lock_path, web_port) {
             Ok(file) => {
                 return Ok(Self {
                     _file: file,
@@ -23,13 +23,13 @@ impl SingleInstance {
 
         let stale = fs::read_to_string(lock_path)
             .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok())
+            .and_then(|s| parse_pid(&s))
             .map(|pid| !process_exists(pid))
             .unwrap_or(true);
 
         if stale {
             let _ = fs::remove_file(lock_path);
-            let file = open_new_lock(lock_path)?;
+            let file = open_new_lock(lock_path, web_port)?;
             return Ok(Self {
                 _file: file,
                 lock_path: lock_path.to_path_buf(),
@@ -41,6 +41,22 @@ impl SingleInstance {
             "instance already running",
         ))
     }
+
+    pub fn read_web_port(lock_path: &Path) -> Option<u16> {
+        let text = fs::read_to_string(lock_path).ok()?;
+        for line in text.lines() {
+            let line = line.trim();
+            let Some(port) = line.strip_prefix("web_port=") else {
+                continue;
+            };
+            if let Ok(port) = port.parse::<u16>() {
+                if port > 0 {
+                    return Some(port);
+                }
+            }
+        }
+        None
+    }
 }
 
 impl Drop for SingleInstance {
@@ -49,15 +65,24 @@ impl Drop for SingleInstance {
     }
 }
 
-fn open_new_lock(lock_path: &Path) -> io::Result<File> {
+fn open_new_lock(lock_path: &Path, web_port: u16) -> io::Result<File> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(lock_path)?;
-    let pid = std::process::id().to_string();
-    file.write_all(pid.as_bytes())?;
+    let text = format!("pid={}\nweb_port={}\n", std::process::id(), web_port);
+    file.write_all(text.as_bytes())?;
     file.flush()?;
     Ok(file)
+}
+
+fn parse_pid(text: &str) -> Option<u32> {
+    let first_line = text.lines().next()?.trim();
+    first_line
+        .strip_prefix("pid=")
+        .unwrap_or(first_line)
+        .parse::<u32>()
+        .ok()
 }
 
 fn process_exists(pid: u32) -> bool {
