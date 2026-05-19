@@ -1,10 +1,21 @@
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(target_os = "windows")]
+fn hide_windows_console(cmd: &mut Command) -> &mut Command {
+    cmd.creation_flags(CREATE_NO_WINDOW)
+}
+
 pub fn open_url(url: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
-        return Command::new("cmd")
-            .args(["/C", "start", "", url])
+        let mut cmd = Command::new("cmd");
+        return hide_windows_console(cmd.args(["/C", "start", "", url]))
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -37,8 +48,8 @@ pub fn shell_run(command: &str) -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        return Command::new("cmd")
-            .args(["/C", &normalized])
+        let mut cmd = Command::new("cmd");
+        return hide_windows_console(cmd.args(["/C", &normalized]))
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
