@@ -28,6 +28,8 @@
 
 ## 如何使用
 
+需要抓取登录 HTTP 报文，以 Chrome 为例：
+
 1. 来到登录页面，按下 F12 打开开发者工具，选择“网络”选项卡，打开“保留日志”与“录制网络日志”
 <p align="center">
     <img width="441"  alt="如何录制post请求" src="https://github.com/user-attachments/assets/5e55c829-b9c9-42cc-8179-3318855d1b5b" />
@@ -42,7 +44,7 @@
 
 ### 注意事项
 
-- 若 macOS 用户提示软件已损坏，将其拖入“应用程序”文件夹并在终端执行如下命令
+- 若 macOS 提示软件已损坏，将其拖入“应用程序”文件夹并在终端执行如下命令
 ```
 sudo xattr -rd com.apple.quarantine /Applications/ePortal\ Guard.app
 ```
@@ -74,7 +76,4 @@ cargo build --release
 cargo run --release
 ```
 
-## 致谢
-
-- [GitHub Copilot](https://github.com/copilot) - 任劳任怨的 Agent
 
