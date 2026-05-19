@@ -28,12 +28,12 @@ pub fn ping_probe(host: &str) -> PingProbe {
         let mut ping = Command::new("ping");
         let ok = hide_windows_console(
             ping.args(["-n", "1", "-w", "1000", host])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null()),
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
         )
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
         return PingProbe {
             ok,
             elapsed_ms: begin.elapsed().as_millis(),
