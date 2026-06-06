@@ -76,4 +76,10 @@ cargo build --release
 cargo run --release
 ```
 
+## 代办事项
+
+- [ ] 补上 FireFox 的 cURL 获取方法
+- [ ] 多次失败会陷入反复重连
+- [ ] 即使有网，当前 cURL 不可用时也会反复重连
+
 
