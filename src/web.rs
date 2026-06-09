@@ -12,7 +12,9 @@ use crate::notifier;
 use crate::platform;
 
 pub const TUTORIAL_URL: &str = "https://github.com/brofea/eportal-guard";
+// 图标直接嵌入二进制，避免 .app 运行目录变化导致静态资源找不到。
 const APP_ICON_PNG: &[u8] = include_bytes!("Assets.xcassets/AppIcon.appiconset/256-mac.png");
+// Web UI 不引入前端构建链，所有交互通过 fetch 调用本地 tiny_http 接口。
 const WEB_JS: &str = r#"<script>
 const statusToneMap = [
     ['正常', 'good'],
@@ -341,6 +343,7 @@ button:hover {
 
 #[derive(Clone, Debug)]
 pub struct SharedState {
+    // Web 控制台轮询读取的状态文本，由监控线程更新。
     pub status_text: String,
 }
 
@@ -362,6 +365,7 @@ pub fn start_web_server(
 ) {
     let addr = format!("127.0.0.1:{}", port);
     std::thread::spawn(move || {
+        // Web 服务只监听 127.0.0.1，作为本机后门控制台使用。
         let server = match Server::http(&addr) {
             Ok(s) => s,
             Err(_) => {
@@ -371,6 +375,7 @@ pub fn start_web_server(
         };
 
         for req in server.incoming_requests() {
+            // 请求处理必须隔离 panic，避免 release 构建中一个按钮请求带崩整个进程。
             let result = panic::catch_unwind(AssertUnwindSafe(|| {
                 handle_request(req, &state, &running, &config_path, &curl_path, &exe_path);
             }));
@@ -400,6 +405,7 @@ fn handle_request(
     debuglog::log("web", &format!("{} {}", req.method().as_str(), url));
     match (req.method(), url.as_str()) {
         (&Method::Get, "/") => {
+            // 首页每次动态渲染，确保配置文件手动修改后刷新即可看到最新值。
             let body = render_home(state, config_path, curl_path, exe_path);
             let html_header = Header::from_bytes(
                 b"Content-Type".as_slice(),
@@ -433,6 +439,7 @@ fn handle_request(
             let _ = req.respond(resp);
         }
         (&Method::Post, "/save") => {
+            // 保存连接设置；探针间隔沿用旧字段名 ping_interval_secs 做配置兼容。
             let form = read_form(&mut req);
             let mut cfg = config::load_config(config_path);
             if let Some(v) = form
@@ -457,6 +464,7 @@ fn handle_request(
             }
         }
         (&Method::Post, "/save-curl") => {
+            // cURL 原文单独存储，避免和 config.toml 的简易解析互相影响。
             let form = read_form(&mut req);
             let content = form.get("curl").cloned().unwrap_or_default();
             match config::write_curl(curl_path, &content) {
@@ -473,6 +481,7 @@ fn handle_request(
             }
         }
         (&Method::Post, "/manual-login") => {
+            // 手动登录直接执行用户保存的 cURL，不参与自动失败计数。
             let cmd = config::read_curl(curl_path).unwrap_or_default();
             let ok = crate::platform::shell_run(&cmd);
             let _ = req.respond(
@@ -501,6 +510,7 @@ fn handle_request(
             }
         }
         (&Method::Post, "/quit") => {
+            // 由主线程轮询 running 标志并自然退出，确保锁文件 Drop 清理。
             running.store(false, Ordering::SeqCst);
             let _ = req.respond(Response::from_string("bye").with_status_code(200));
         }
@@ -521,6 +531,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
 }
 
 fn respond_app_icon(req: Request, include_body: bool) {
+    // favicon 和左上角 logo 共用同一份嵌入 PNG。
     let header = Header::from_bytes(b"Content-Type".as_slice(), b"image/png".as_slice()).ok();
     let cache_header = Header::from_bytes(
         b"Cache-Control".as_slice(),
@@ -548,6 +559,7 @@ fn render_home(
     curl_path: &std::path::Path,
     exe_path: &std::path::Path,
 ) -> String {
+    // 使用 html_escape 保护用户粘贴的 cURL 和配置值，避免打破页面结构。
     let cfg = config::load_config(config_path);
     let curl = config::read_curl(curl_path).unwrap_or_default();
     let s = state.lock().map(|v| v.clone()).unwrap_or_default();
@@ -642,6 +654,7 @@ fn html_escape(input: &str) -> String {
 }
 
 fn read_form(req: &mut Request) -> HashMap<String, String> {
+    // 只解析 application/x-www-form-urlencoded，满足当前 Web UI 的表单提交。
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
         return HashMap::new();
@@ -661,6 +674,7 @@ fn read_form(req: &mut Request) -> HashMap<String, String> {
 }
 
 fn percent_decode(v: &str) -> String {
+    // 表单解码保持宽容：非法百分号编码原样保留，最终 UTF-8 失败则返回空串。
     let bytes = v.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

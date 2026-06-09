@@ -1,6 +1,7 @@
 use std::process::Command;
 
 pub fn open_url(url: &str) -> bool {
+    // 用各平台的系统默认方式打开 URL，保持 App 不绑定特定浏览器。
     #[cfg(target_os = "windows")]
     {
         return Command::new("cmd")
@@ -35,6 +36,7 @@ pub fn open_url(url: &str) -> bool {
 pub fn shell_run(command: &str) -> bool {
     let normalized = normalize_command(command);
 
+    // cURL 登录命令本质是用户复制来的 shell 命令，按平台交给系统 shell 执行。
     #[cfg(target_os = "windows")]
     {
         return Command::new("cmd")
@@ -56,6 +58,7 @@ pub fn shell_run(command: &str) -> bool {
 }
 
 fn normalize_command(input: &str) -> String {
+    // 兼容浏览器开发者工具复制出的 BOM、CRLF、多行续行和命令提示符前缀。
     let mut text = input.trim_start_matches('\u{feff}').trim().to_string();
     if text.is_empty() {
         return text;
@@ -77,6 +80,7 @@ fn normalize_command(input: &str) -> String {
 
     let starts_with_curl = lines[0] == "curl" || lines[0].starts_with("curl ");
     if starts_with_curl {
+        // 多行 cURL 通常只是为了可读性换行，这里压成一行交给 shell。
         return lines
             .join(" ")
             .split_whitespace()

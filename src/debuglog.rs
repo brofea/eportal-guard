@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// 调试阶段默认输出到终端，同时也写入配置目录下的 debug.log。
 static CONSOLE_ENABLED: AtomicBool = AtomicBool::new(true);
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -13,6 +14,7 @@ pub fn set_console_enabled(enabled: bool) {
 }
 
 pub fn log(component: &str, message: &str) {
+    // 日志路径延迟初始化，避免模块初始化阶段就依赖 HOME / APPDATA。
     let path = LOG_PATH.get_or_init(|| {
         let path = crate::paths::app_config_dir().join("debug.log");
         if let Some(parent) = path.parent() {

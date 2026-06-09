@@ -11,6 +11,7 @@ use std::process::Command;
 use crate::paths::APP_RUN_KEY_NAME;
 
 pub fn is_enabled(_exe_path: &std::path::Path) -> bool {
+    // 三个平台的自启机制完全不同，因此在同一个入口里按平台分发。
     #[cfg(target_os = "windows")]
     {
         let output = Command::new("reg")
@@ -44,6 +45,7 @@ pub fn is_enabled(_exe_path: &std::path::Path) -> bool {
 pub fn set_enabled(exe_path: &std::path::Path, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        // Windows 使用当前用户 Run 注册表项，不需要管理员权限。
         if enabled {
             let value = format!("\"{}\"", exe_path.to_string_lossy());
             let ok = Command::new("reg")
@@ -86,6 +88,7 @@ pub fn set_enabled(exe_path: &std::path::Path, enabled: bool) -> Result<(), Stri
 
     #[cfg(target_os = "macos")]
     {
+        // macOS 登录项可能重复，开启前先删一次，保证最终只有当前可执行文件路径。
         if enabled {
             macos_remove_login_item(exe_path).ok();
             macos_add_login_item(exe_path).map_err(|e| format!("添加 macOS 登录项失败: {}", e))?;
@@ -98,6 +101,7 @@ pub fn set_enabled(exe_path: &std::path::Path, enabled: bool) -> Result<(), Stri
 
     #[cfg(target_os = "linux")]
     {
+        // Linux 桌面环境使用 XDG autostart .desktop 文件。
         let desktop = desktop_entry_path();
         if enabled {
             if let Some(parent) = desktop.parent() {
@@ -126,6 +130,7 @@ pub fn set_enabled(exe_path: &std::path::Path, enabled: bool) -> Result<(), Stri
 
 #[cfg(target_os = "macos")]
 fn macos_login_item_exists(exe_path: &std::path::Path) -> Result<bool, String> {
+    // 以完整路径判断，避免同名旧版本 App 干扰开机自启状态。
     let expected = exe_path.to_string_lossy().to_string();
     let paths = macos_login_item_paths()?;
     Ok(paths.iter().any(|p| p == &expected))
@@ -133,6 +138,7 @@ fn macos_login_item_exists(exe_path: &std::path::Path) -> Result<bool, String> {
 
 #[cfg(target_os = "macos")]
 fn macos_add_login_item(exe_path: &std::path::Path) -> Result<(), String> {
+    // System Events 是不引入额外 macOS 依赖时最直接的登录项接口。
     let path = escape_applescript(&exe_path.to_string_lossy());
     let file_name = exe_path
         .file_name()
@@ -175,6 +181,7 @@ fn macos_login_item_paths() -> Result<Vec<String>, String> {
 
 #[cfg(target_os = "macos")]
 fn run_osascript(script: &str) -> Result<String, String> {
+    // 调用失败时把 stderr 返回给 Web UI，便于用户定位系统权限问题。
     let output = Command::new("osascript")
         .arg("-e")
         .arg(script)
@@ -195,6 +202,7 @@ fn escape_applescript(input: &str) -> String {
 
 #[cfg(target_os = "linux")]
 fn desktop_entry_path() -> PathBuf {
+    // 优先写入用户 HOME 下的 autostart，缺失 HOME 时退回当前目录便于测试。
     if let Ok(home) = env::var("HOME") {
         return PathBuf::from(home)
             .join(".config")

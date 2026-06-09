@@ -2,6 +2,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+// 应用配置目前仍保留 ping_* 字段名，主要为了兼容已生成的 config.toml。
+// 实际含义已经变成“网络探针间隔”，不再执行系统 ping 命令。
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub ping_interval_secs: u64,
@@ -20,6 +22,7 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    // 手写一个极小 TOML 子集，避免为了三项配置引入额外依赖。
     pub fn to_toml_string(&self) -> String {
         format!(
             "ping_interval_secs = {}\nping_host = \"{}\"\nweb_port = {}\n",
@@ -29,6 +32,7 @@ impl AppConfig {
 }
 
 pub fn ensure_files(config_path: &Path, curl_path: &Path) -> io::Result<()> {
+    // 首次启动时创建配置和 cURL 文件；之后不覆盖用户已有内容。
     if !config_path.exists() {
         fs::write(config_path, AppConfig::default().to_toml_string())?;
     }
@@ -44,6 +48,7 @@ pub fn load_config(path: &Path) -> AppConfig {
         Err(_) => return AppConfig::default(),
     };
 
+    // 解析失败的字段直接落回默认值，避免配置文件局部损坏导致程序无法启动。
     let mut cfg = AppConfig::default();
     for raw in text.lines() {
         let line = raw.trim();

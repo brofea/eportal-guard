@@ -1,11 +1,13 @@
 use std::env;
 use std::path::PathBuf;
 
+// 所有运行时文件统一放在系统约定的用户配置目录下，避免污染安装目录。
 pub const APP_DIR_NAME: &str = "eportal-guard";
 #[cfg(target_os = "windows")]
 pub const APP_RUN_KEY_NAME: &str = "ePortalGuard";
 
 pub fn app_config_dir() -> PathBuf {
+    // Windows/macOS/Linux 分别遵守各自的用户配置目录习惯。
     #[cfg(target_os = "windows")]
     {
         if let Ok(base) = env::var("APPDATA") {

@@ -20,6 +20,7 @@ use config::{ensure_files, ensure_parent_dir};
 use web::SharedState;
 
 fn main() {
+    // 支持 release bundle 通过 --help 自检，也方便 CI 构建脚本验证二进制可运行。
     let args: Vec<String> = std::env::args().collect();
     if args
         .iter()
@@ -53,6 +54,7 @@ fn run() -> Result<(), String> {
     ensure_parent_dir(&config_path).map_err(|e| e.to_string())?;
     ensure_files(&config_path, &curl_path).map_err(|e| e.to_string())?;
 
+    // 先读取配置再申请锁，这样第二个实例也知道应该打开哪个 Web 端口。
     let cfg = config::load_config(&config_path);
     let _lock = match single_instance::SingleInstance::acquire(&lock_path, cfg.web_port) {
         Ok(v) => v,
@@ -89,6 +91,7 @@ fn run() -> Result<(), String> {
         .map(|s| s.trim().is_empty())
         .unwrap_or(true)
     {
+        // 首次使用还没有 cURL 时主动打开控制台，引导用户完成配置。
         open_web_panel(cfg.web_port, "empty curl");
     }
 
@@ -116,6 +119,7 @@ fn open_web_panel(port: u16, reason: &str) {
 }
 
 fn wait_for_web_panel(port: u16) {
+    // Web 服务器在线程里启动，打开浏览器前短暂等待端口可连。
     let deadline = Instant::now() + Duration::from_millis(1200);
     while Instant::now() < deadline {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -132,6 +136,7 @@ fn start_monitor(
     curl_path: std::path::PathBuf,
 ) {
     thread::spawn(move || {
+        // 自动登录的核心状态机：只有 cURL 已配置、内网可达、外网不可达时才执行登录。
         let mut previous_cfg = config::load_config(&config_path);
         let mut login_failure_count: u32 = 0;
         let mut login_failure_notified = false;
@@ -142,6 +147,7 @@ fn start_monitor(
                 || cfg.ping_host != previous_cfg.ping_host
                 || cfg.web_port != previous_cfg.web_port
             {
+                // 配置文件可能由 Web UI 或用户手动修改，监控线程每轮重新加载。
                 notifier::notify("ePortal Guard", "配置更新");
                 previous_cfg = cfg.clone();
             }
@@ -157,6 +163,7 @@ fn start_monitor(
             );
 
             if curl_cmd.trim().is_empty() {
+                // 没有 cURL 时绝不探测和登录，避免空配置状态下刷屏或误报。
                 debuglog::log("monitor", "skip: curl is empty");
                 reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
                 set_state(&shared_state, "未配置 cURL，等待配置");
@@ -173,6 +180,7 @@ fn start_monitor(
                 ),
             );
             if !intranet_connected {
+                // 未连接校园内网时跳过外网探针和登录，减少无意义请求。
                 debuglog::log("monitor", "skip: intranet is not connected");
                 reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
                 set_state(&shared_state, "未连接内网，跳过登录");
@@ -194,10 +202,12 @@ fn start_monitor(
             );
 
             if probe.ok {
+                // 外网可达说明当前 cURL 是否过期无关紧要，不应反复执行登录命令。
                 debuglog::log("monitor", "internet available, skip login");
                 reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
                 set_state(&shared_state, "网络正常");
             } else if !network::curl_exists() {
+                // 系统 curl 缺失属于登录失败条件，但也遵守 10 次后才通知的策略。
                 register_login_failure(
                     &shared_state,
                     &mut login_failure_count,
@@ -235,6 +245,7 @@ fn sleep_monitor_interval(cfg: &config::AppConfig) {
 }
 
 fn reset_login_failures(count: &mut u32, notified: &mut bool) {
+    // 进入任何“无需登录/登录成功”的状态后，重新开始失败计数。
     *count = 0;
     *notified = false;
 }
@@ -245,6 +256,7 @@ fn register_login_failure(
     notified: &mut bool,
     status: &str,
 ) {
+    // 失败连续累计到 10 次时只弹一次通知，避免系统消息轰炸。
     *count = count.saturating_add(1);
     debuglog::log(
         "monitor",
