@@ -1,11 +1,17 @@
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::process::Command;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub fn open_url(url: &str) -> bool {
     // 用各平台的系统默认方式打开 URL，保持 App 不绑定特定浏览器。
     #[cfg(target_os = "windows")]
     {
-        return Command::new("cmd")
-            .args(["/C", "start", "", url])
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        return hide_window(&mut command)
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -34,27 +40,37 @@ pub fn open_url(url: &str) -> bool {
 }
 
 pub fn shell_run(command: &str) -> bool {
+    shell_run_capture(command)
+}
+
+pub fn shell_run_capture(command: &str) -> bool {
     let normalized = normalize_command(command);
 
     // cURL 登录命令本质是用户复制来的 shell 命令，按平台交给系统 shell 执行。
     #[cfg(target_os = "windows")]
     {
-        return Command::new("cmd")
-            .args(["/C", &normalized])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let mut command = Command::new("cmd");
+        command.args(["/C", &normalized]);
+        return command_output(hide_window(&mut command));
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        return Command::new("sh")
-            .arg("-c")
-            .arg(&normalized)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        return command_output(Command::new("sh").arg("-c").arg(&normalized));
     }
+}
+
+fn command_output(command: &mut Command) -> bool {
+    command
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn hide_window(command: &mut Command) -> &mut Command {
+    // Windows GUI 程序启动 cmd/curl 子进程时默认会闪出控制台窗口，这里显式隐藏。
+    command.creation_flags(CREATE_NO_WINDOW)
 }
 
 fn normalize_command(input: &str) -> String {

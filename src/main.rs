@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 use config::{ensure_files, ensure_parent_dir};
 use web::SharedState;
 
+const MAX_LOGIN_FAILURES: u32 = 5;
+
 fn main() {
     // 支持 release bundle 通过 --help 自检，也方便 CI 构建脚本验证二进制可运行。
     let args: Vec<String> = std::env::args().collect();
@@ -143,6 +145,7 @@ fn start_monitor(
         let mut previous_cfg = config::load_config(&config_path);
         let mut login_failure_count: u32 = 0;
         let mut login_failure_notified = false;
+        let mut previous_curl_cmd = String::new();
 
         while running.load(Ordering::SeqCst) {
             let cfg = config::load_config(&config_path);
@@ -156,6 +159,12 @@ fn start_monitor(
             }
 
             let curl_cmd = config::read_curl(&curl_path).unwrap_or_default();
+            if curl_cmd != previous_curl_cmd {
+                debuglog::log("监控", "检测到 cURL 内容变化，重置登录失败计数");
+                reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
+                previous_curl_cmd = curl_cmd.clone();
+            }
+
             debuglog::log(
                 "监控",
                 &format!(
@@ -203,16 +212,22 @@ fn start_monitor(
             debuglog::log(
                 "监控",
                 &format!(
-                    "互联网状态: {} | 小米探针: {} {}ms | 阿里 DNS 探针: {} {}ms",
+                    "互联网状态: {} | 小米探针: {} HTTP {} exit {:?} {}ms{} | 华为探针: {} HTTP {} exit {:?} {}ms{}",
                     if probe.ok {
                         "可访问"
                     } else {
                         "不可访问"
                     },
                     if probe.miui.ok { "成功" } else { "失败" },
+                    probe.miui.status_code,
+                    probe.miui.exit_code,
                     probe.miui.elapsed_ms,
-                    if probe.alidns.ok { "成功" } else { "失败" },
-                    probe.alidns.elapsed_ms,
+                    probe_error_suffix(&probe.miui),
+                    if probe.huawei.ok { "成功" } else { "失败" },
+                    probe.huawei.status_code,
+                    probe.huawei.exit_code,
+                    probe.huawei.elapsed_ms,
+                    probe_error_suffix(&probe.huawei),
                 ),
             );
 
@@ -222,21 +237,62 @@ fn start_monitor(
                 reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
                 set_state(&shared_state, "网络正常");
             } else if !network::curl_exists() {
-                // 系统 curl 缺失属于登录失败条件，但也遵守 10 次后才通知的策略。
+                // 系统 curl 缺失属于登录失败条件，但也遵守 5 次后暂停的策略。
                 register_login_failure(
                     &shared_state,
                     &mut login_failure_count,
                     &mut login_failure_notified,
                     "未检测到系统 curl 命令",
                 );
-            } else {
-                debuglog::log("监控", "互联网不可访问，开始执行登录 cURL");
-                let login_ok = platform::shell_run(&curl_cmd);
+            } else if login_failure_count >= MAX_LOGIN_FAILURES {
                 debuglog::log(
                     "监控",
                     &format!(
-                        "登录 cURL 执行结果: {}",
-                        if login_ok { "成功" } else { "失败" }
+                        "登录失败已达到 {} 次，暂停自动执行 cURL，等待 cURL 更新或网络恢复",
+                        MAX_LOGIN_FAILURES
+                    ),
+                );
+                set_state(&shared_state, "无法登陆，已暂停重试");
+            } else {
+                debuglog::log("监控", "互联网不可访问，开始执行登录 cURL");
+                let curl_exit_ok = platform::shell_run_capture(&curl_cmd);
+                debuglog::log(
+                    "监控",
+                    &format!(
+                        "登录 cURL 命令退出结果: {}",
+                        if curl_exit_ok { "成功" } else { "失败" }
+                    ),
+                );
+
+                let after_login_probe = network::internet_probe();
+                let login_ok = curl_exit_ok && after_login_probe.ok;
+                debuglog::log(
+                    "监控",
+                    &format!(
+                        "登录后复查结果: {} | 小米探针: {} HTTP {} exit {:?} {}ms{} | 华为探针: {} HTTP {} exit {:?} {}ms{}",
+                        if after_login_probe.ok {
+                            "互联网已恢复"
+                        } else {
+                            "互联网仍不可访问"
+                        },
+                        if after_login_probe.miui.ok {
+                            "成功"
+                        } else {
+                            "失败"
+                        },
+                        after_login_probe.miui.status_code,
+                        after_login_probe.miui.exit_code,
+                        after_login_probe.miui.elapsed_ms,
+                        probe_error_suffix(&after_login_probe.miui),
+                        if after_login_probe.huawei.ok {
+                            "成功"
+                        } else {
+                            "失败"
+                        },
+                        after_login_probe.huawei.status_code,
+                        after_login_probe.huawei.exit_code,
+                        after_login_probe.huawei.elapsed_ms,
+                        probe_error_suffix(&after_login_probe.huawei),
                     ),
                 );
 
@@ -274,21 +330,29 @@ fn register_login_failure(
     notified: &mut bool,
     status: &str,
 ) {
-    // 失败连续累计到 10 次时只弹一次通知，避免系统消息轰炸。
+    // 失败连续累计到 5 次时只弹一次通知，并暂停后续自动重试。
     *count = count.saturating_add(1);
     debuglog::log(
         "监控",
         &format!("登录失败计数: {} | 状态: {}", count, status),
     );
 
-    if *count >= 10 {
-        set_state(shared_state, "无法登陆");
+    if *count >= MAX_LOGIN_FAILURES {
+        set_state(shared_state, "无法登陆，已暂停重试");
         if !*notified {
             notifier::notify("ePortal Guard", "无法登陆");
             *notified = true;
         }
     } else {
         set_state(shared_state, status);
+    }
+}
+
+fn probe_error_suffix(probe: &network::HeadProbe) -> String {
+    if probe.error_message.is_empty() {
+        String::new()
+    } else {
+        format!(" | 错误: {}", probe.error_message)
     }
 }
 
