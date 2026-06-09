@@ -32,12 +32,12 @@ fn main() {
 
     debuglog::set_console_enabled(true);
 
-    debuglog::log("main", "process start");
+    debuglog::log("主进程", "进程启动");
     if let Err(e) = run() {
-        debuglog::log("main", &format!("fatal error: {}", e));
+        debuglog::log("主进程", &format!("致命错误: {}", e));
         notifier::notify("ePortal Guard", &format!("启动失败: {}", e));
     }
-    debuglog::log("main", "process end");
+    debuglog::log("主进程", "进程结束");
 }
 
 fn print_help() {
@@ -47,7 +47,7 @@ fn print_help() {
 }
 
 fn run() -> Result<(), String> {
-    debuglog::log("core", "initializing core process");
+    debuglog::log("核心", "初始化核心流程");
     let config_path = paths::config_path();
     let curl_path = paths::curl_path();
     let lock_path = paths::lock_path();
@@ -59,10 +59,10 @@ fn run() -> Result<(), String> {
     let _lock = match single_instance::SingleInstance::acquire(&lock_path, cfg.web_port) {
         Ok(v) => v,
         Err(_) => {
-            debuglog::log("core", "single-instance acquire failed");
+            debuglog::log("核心", "获取单实例锁失败，已有实例正在运行");
             let port =
                 single_instance::SingleInstance::read_web_port(&lock_path).unwrap_or(cfg.web_port);
-            open_web_panel(port, "existing instance");
+            open_web_panel(port, "已有实例");
             return Ok(());
         }
     };
@@ -72,9 +72,9 @@ fn run() -> Result<(), String> {
     let running = Arc::new(AtomicBool::new(true));
 
     debuglog::log(
-        "core",
+        "核心",
         &format!(
-            "web startup on 127.0.0.1:{} | monitor interval={}s",
+            "Web 控制台启动地址 127.0.0.1:{} | 监控间隔 {} 秒",
             cfg.web_port, cfg.ping_interval_secs
         ),
     );
@@ -92,7 +92,7 @@ fn run() -> Result<(), String> {
         .unwrap_or(true)
     {
         // 首次使用还没有 cURL 时主动打开控制台，引导用户完成配置。
-        open_web_panel(cfg.web_port, "empty curl");
+        open_web_panel(cfg.web_port, "cURL 为空");
     }
 
     start_monitor(
@@ -111,10 +111,13 @@ fn run() -> Result<(), String> {
 
 fn open_web_panel(port: u16, reason: &str) {
     let url = format!("http://127.0.0.1:{}/", port);
-    debuglog::log("core", &format!("open web panel: {} | {}", url, reason));
+    debuglog::log(
+        "核心",
+        &format!("打开 Web 控制台: {} | 原因: {}", url, reason),
+    );
     wait_for_web_panel(port);
     if !platform::open_url(&url) {
-        debuglog::log("core", &format!("open web panel failed: {}", url));
+        debuglog::log("核心", &format!("打开 Web 控制台失败: {}", url));
     }
 }
 
@@ -154,17 +157,21 @@ fn start_monitor(
 
             let curl_cmd = config::read_curl(&curl_path).unwrap_or_default();
             debuglog::log(
-                "monitor",
+                "监控",
                 &format!(
-                    "tick | curl_configured={} | interval={}s",
-                    !curl_cmd.trim().is_empty(),
+                    "本轮检查 | cURL 已配置: {} | 间隔: {} 秒",
+                    if curl_cmd.trim().is_empty() {
+                        "否"
+                    } else {
+                        "是"
+                    },
                     cfg.ping_interval_secs.max(1)
                 ),
             );
 
             if curl_cmd.trim().is_empty() {
                 // 没有 cURL 时绝不探测和登录，避免空配置状态下刷屏或误报。
-                debuglog::log("monitor", "skip: curl is empty");
+                debuglog::log("监控", "跳过检查: cURL 为空");
                 reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
                 set_state(&shared_state, "未配置 cURL，等待配置");
                 sleep_monitor_interval(&cfg);
@@ -173,15 +180,19 @@ fn start_monitor(
 
             let intranet_connected = network::has_private_ip();
             debuglog::log(
-                "monitor",
+                "监控",
                 &format!(
-                    "intranet={}",
-                    if intranet_connected { "ok" } else { "down" }
+                    "内网状态: {}",
+                    if intranet_connected {
+                        "已连接"
+                    } else {
+                        "未连接"
+                    }
                 ),
             );
             if !intranet_connected {
                 // 未连接校园内网时跳过外网探针和登录，减少无意义请求。
-                debuglog::log("monitor", "skip: intranet is not connected");
+                debuglog::log("监控", "跳过检查: 未连接内网");
                 reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
                 set_state(&shared_state, "未连接内网，跳过登录");
                 sleep_monitor_interval(&cfg);
@@ -190,20 +201,24 @@ fn start_monitor(
 
             let probe = network::internet_probe();
             debuglog::log(
-                "monitor",
+                "监控",
                 &format!(
-                    "internet={} | miui={} {}ms | alidns={} {}ms",
-                    if probe.ok { "ok" } else { "down" },
-                    if probe.miui.ok { "ok" } else { "fail" },
+                    "互联网状态: {} | 小米探针: {} {}ms | 阿里 DNS 探针: {} {}ms",
+                    if probe.ok {
+                        "可访问"
+                    } else {
+                        "不可访问"
+                    },
+                    if probe.miui.ok { "成功" } else { "失败" },
                     probe.miui.elapsed_ms,
-                    if probe.alidns.ok { "ok" } else { "fail" },
+                    if probe.alidns.ok { "成功" } else { "失败" },
                     probe.alidns.elapsed_ms,
                 ),
             );
 
             if probe.ok {
                 // 外网可达说明当前 cURL 是否过期无关紧要，不应反复执行登录命令。
-                debuglog::log("monitor", "internet available, skip login");
+                debuglog::log("监控", "互联网可访问，跳过自动登录");
                 reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
                 set_state(&shared_state, "网络正常");
             } else if !network::curl_exists() {
@@ -215,11 +230,14 @@ fn start_monitor(
                     "未检测到系统 curl 命令",
                 );
             } else {
-                debuglog::log("monitor", "internet unavailable, running login curl");
+                debuglog::log("监控", "互联网不可访问，开始执行登录 cURL");
                 let login_ok = platform::shell_run(&curl_cmd);
                 debuglog::log(
-                    "monitor",
-                    &format!("login curl result={}", if login_ok { "ok" } else { "fail" }),
+                    "监控",
+                    &format!(
+                        "登录 cURL 执行结果: {}",
+                        if login_ok { "成功" } else { "失败" }
+                    ),
                 );
 
                 if login_ok {
@@ -259,8 +277,8 @@ fn register_login_failure(
     // 失败连续累计到 10 次时只弹一次通知，避免系统消息轰炸。
     *count = count.saturating_add(1);
     debuglog::log(
-        "monitor",
-        &format!("login failure count={} | {}", count, status),
+        "监控",
+        &format!("登录失败计数: {} | 状态: {}", count, status),
     );
 
     if *count >= 10 {
@@ -277,7 +295,10 @@ fn register_login_failure(
 fn set_state(shared_state: &Arc<Mutex<SharedState>>, status: &str) {
     if let Ok(mut s) = shared_state.lock() {
         if s.status_text != status {
-            debuglog::log("state", &format!("{} -> {}", s.status_text, status));
+            debuglog::log(
+                "状态",
+                &format!("状态变化: {} -> {}", s.status_text, status),
+            );
             s.status_text.clear();
             s.status_text.push_str(status);
         }

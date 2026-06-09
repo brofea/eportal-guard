@@ -14,11 +14,8 @@ pub fn notify(summary: &str, body: &str) {
 
     match status {
         Ok(s) if s.success() => {}
-        Ok(s) => crate::debuglog::log(
-            "notifier",
-            &format!("notification command exited with status: {}", s),
-        ),
-        Err(e) => crate::debuglog::log("notifier", &format!("notification failed: {}", e)),
+        Ok(s) => crate::debuglog::log("通知", &format!("系统通知命令退出状态异常: {}", s)),
+        Err(e) => crate::debuglog::log("通知", &format!("发送系统通知失败: {}", e)),
     }
 }
 
@@ -46,7 +43,7 @@ pub fn notify(summary: &str, body: &str) {
 
     match result {
         Ok(Ok(_)) => {}
-        Ok(Err(e)) => crate::debuglog::log("notifier", &format!("notification failed: {}", e)),
-        Err(_) => crate::debuglog::log("notifier", "notification panicked"),
+        Ok(Err(e)) => crate::debuglog::log("通知", &format!("发送系统通知失败: {}", e)),
+        Err(_) => crate::debuglog::log("通知", "发送系统通知时发生 panic"),
     }
 }

@@ -382,11 +382,8 @@ pub fn start_web_server(
 
             if let Err(payload) = result {
                 debuglog::log(
-                    "web",
-                    &format!(
-                        "request handler panicked: {}",
-                        panic_message(payload.as_ref())
-                    ),
+                    "网页",
+                    &format!("请求处理发生 panic: {}", panic_message(payload.as_ref())),
                 );
             }
         }
@@ -402,7 +399,10 @@ fn handle_request(
     exe_path: &std::path::Path,
 ) {
     let url = req.url().to_string();
-    debuglog::log("web", &format!("{} {}", req.method().as_str(), url));
+    debuglog::log(
+        "网页",
+        &format!("收到请求: {} {}", req.method().as_str(), url),
+    );
     match (req.method(), url.as_str()) {
         (&Method::Get, "/") => {
             // 首页每次动态渲染，确保配置文件手动修改后刷新即可看到最新值。
