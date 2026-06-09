@@ -3,63 +3,56 @@ use std::process::Command;
 use std::process::Stdio;
 use std::time::Instant;
 
+pub const MIUI_204_URL: &str = "http://connect.rom.miui.com/generate_204";
+pub const ALIDNS_URL: &str = "https://dns.alicdn.com";
+
 #[derive(Clone, Debug)]
-pub struct PingProbe {
+pub struct HeadProbe {
     pub ok: bool,
     pub elapsed_ms: u128,
 }
 
-pub fn ping_probe(host: &str) -> PingProbe {
+#[derive(Clone, Debug)]
+pub struct InternetProbe {
+    pub ok: bool,
+    pub miui: HeadProbe,
+    pub alidns: HeadProbe,
+}
+
+pub fn internet_probe() -> InternetProbe {
+    let miui = head_probe(MIUI_204_URL);
+    let alidns = head_probe(ALIDNS_URL);
+    InternetProbe {
+        ok: miui.ok || alidns.ok,
+        miui,
+        alidns,
+    }
+}
+
+pub fn head_probe(url: &str) -> HeadProbe {
     let begin = Instant::now();
+    let ok = Command::new("curl")
+        .args([
+            "--head",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "3",
+            "--output",
+            #[cfg(target_os = "windows")]
+            "NUL",
+            #[cfg(not(target_os = "windows"))]
+            "/dev/null",
+            url,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
 
-    #[cfg(target_os = "windows")]
-    {
-        let ok = Command::new("ping")
-            .args(["-n", "1", "-w", "1000", host])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        return PingProbe {
-            ok,
-            elapsed_ms: begin.elapsed().as_millis(),
-        };
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let ok = Command::new("ping")
-            .args(["-c", "1", "-W", "1000", host])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        return PingProbe {
-            ok,
-            elapsed_ms: begin.elapsed().as_millis(),
-        };
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let ok = Command::new("ping")
-            .args(["-c", "1", "-W", "1", host])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        return PingProbe {
-            ok,
-            elapsed_ms: begin.elapsed().as_millis(),
-        };
-    }
-
-    #[allow(unreachable_code)]
-    PingProbe {
-        ok: false,
+    HeadProbe {
+        ok,
         elapsed_ms: begin.elapsed().as_millis(),
     }
 }

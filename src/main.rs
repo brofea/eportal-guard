@@ -29,8 +29,7 @@ fn main() {
         return;
     }
 
-    let enable_console_log = should_enable_console_log(&args);
-    debuglog::set_console_enabled(enable_console_log);
+    debuglog::set_console_enabled(true);
 
     debuglog::log("main", "process start");
     if let Err(e) = run() {
@@ -40,13 +39,9 @@ fn main() {
     debuglog::log("main", "process end");
 }
 
-fn should_enable_console_log(args: &[String]) -> bool {
-    args.len() > 1
-}
-
 fn print_help() {
     println!(
-        "ePortal Guard 参数列表:\n  -help, --help, -h      显示参数说明\n\n日志行为:\n  默认启动不输出终端日志；\n  通过终端携带额外参数启动时，终端日志自动开启。"
+        "ePortal Guard 参数列表:\n  -help, --help, -h      显示参数说明\n\n日志行为:\n  默认同时输出到终端和 debug.log，便于调试。"
     );
 }
 
@@ -77,8 +72,8 @@ fn run() -> Result<(), String> {
     debuglog::log(
         "core",
         &format!(
-            "web startup on 127.0.0.1:{} | ping host={} interval={}s",
-            cfg.web_port, cfg.ping_host, cfg.ping_interval_secs
+            "web startup on 127.0.0.1:{} | monitor interval={}s",
+            cfg.web_port, cfg.ping_interval_secs
         ),
     );
     web::start_web_server(
@@ -138,6 +133,9 @@ fn start_monitor(
 ) {
     thread::spawn(move || {
         let mut previous_cfg = config::load_config(&config_path);
+        let mut login_failure_count: u32 = 0;
+        let mut login_failure_notified = false;
+
         while running.load(Ordering::SeqCst) {
             let cfg = config::load_config(&config_path);
             if cfg.ping_interval_secs != previous_cfg.ping_interval_secs
@@ -148,56 +146,126 @@ fn start_monitor(
                 previous_cfg = cfg.clone();
             }
 
-            let probe = network::ping_probe(&cfg.ping_host);
+            let curl_cmd = config::read_curl(&curl_path).unwrap_or_default();
             debuglog::log(
                 "monitor",
                 &format!(
-                    "{} | {}ms | host={}",
-                    if probe.ok {
-                        "PING 成功"
-                    } else {
-                        "PING 失败"
-                    },
-                    probe.elapsed_ms,
-                    cfg.ping_host
+                    "tick | curl_configured={} | interval={}s",
+                    !curl_cmd.trim().is_empty(),
+                    cfg.ping_interval_secs.max(1)
+                ),
+            );
+
+            if curl_cmd.trim().is_empty() {
+                debuglog::log("monitor", "skip: curl is empty");
+                reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
+                set_state(&shared_state, "未配置 cURL，等待配置");
+                sleep_monitor_interval(&cfg);
+                continue;
+            }
+
+            let intranet_connected = network::has_private_ip();
+            debuglog::log(
+                "monitor",
+                &format!(
+                    "intranet={}",
+                    if intranet_connected { "ok" } else { "down" }
+                ),
+            );
+            if !intranet_connected {
+                debuglog::log("monitor", "skip: intranet is not connected");
+                reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
+                set_state(&shared_state, "未连接内网，跳过登录");
+                sleep_monitor_interval(&cfg);
+                continue;
+            }
+
+            let probe = network::internet_probe();
+            debuglog::log(
+                "monitor",
+                &format!(
+                    "internet={} | miui={} {}ms | alidns={} {}ms",
+                    if probe.ok { "ok" } else { "down" },
+                    if probe.miui.ok { "ok" } else { "fail" },
+                    probe.miui.elapsed_ms,
+                    if probe.alidns.ok { "ok" } else { "fail" },
+                    probe.alidns.elapsed_ms,
                 ),
             );
 
             if probe.ok {
+                debuglog::log("monitor", "internet available, skip login");
+                reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
                 set_state(&shared_state, "网络正常");
-            } else if network::has_private_ip() {
-                set_state(&shared_state, "检测掉线，尝试自动登录");
-                if !network::curl_exists() {
-                    let msg = "未检测到系统 curl 命令";
-                    set_state(&shared_state, "自动登录失败");
-                    notifier::notify("ePortal Guard", msg);
-                } else {
-                    let cmd = config::read_curl(&curl_path).unwrap_or_default();
-                    if cmd.trim().is_empty() {
-                        let msg = "curl.txt 为空，无法登录";
-                        set_state(&shared_state, "自动登录失败");
-                        notifier::notify("ePortal Guard", msg);
-                    } else if platform::shell_run(&cmd) {
-                        set_state(&shared_state, "自动登录成功");
-                        notifier::notify("ePortal Guard", "成功登录");
-                    } else {
-                        let msg = "curl 命令执行失败";
-                        set_state(&shared_state, "自动登录失败");
-                        notifier::notify("ePortal Guard", msg);
-                    }
-                }
+            } else if !network::curl_exists() {
+                register_login_failure(
+                    &shared_state,
+                    &mut login_failure_count,
+                    &mut login_failure_notified,
+                    "未检测到系统 curl 命令",
+                );
             } else {
-                set_state(&shared_state, "未连接内网，跳过登录");
+                debuglog::log("monitor", "internet unavailable, running login curl");
+                let login_ok = platform::shell_run(&curl_cmd);
+                debuglog::log(
+                    "monitor",
+                    &format!("login curl result={}", if login_ok { "ok" } else { "fail" }),
+                );
+
+                if login_ok {
+                    reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
+                    set_state(&shared_state, "自动登录成功");
+                } else {
+                    register_login_failure(
+                        &shared_state,
+                        &mut login_failure_count,
+                        &mut login_failure_notified,
+                        "自动登录失败",
+                    );
+                }
             }
 
-            thread::sleep(Duration::from_secs(cfg.ping_interval_secs.max(1)));
+            sleep_monitor_interval(&cfg);
         }
     });
+}
+
+fn sleep_monitor_interval(cfg: &config::AppConfig) {
+    thread::sleep(Duration::from_secs(cfg.ping_interval_secs.max(1)));
+}
+
+fn reset_login_failures(count: &mut u32, notified: &mut bool) {
+    *count = 0;
+    *notified = false;
+}
+
+fn register_login_failure(
+    shared_state: &Arc<Mutex<SharedState>>,
+    count: &mut u32,
+    notified: &mut bool,
+    status: &str,
+) {
+    *count = count.saturating_add(1);
+    debuglog::log(
+        "monitor",
+        &format!("login failure count={} | {}", count, status),
+    );
+
+    if *count >= 10 {
+        set_state(shared_state, "无法登陆");
+        if !*notified {
+            notifier::notify("ePortal Guard", "无法登陆");
+            *notified = true;
+        }
+    } else {
+        set_state(shared_state, status);
+    }
 }
 
 fn set_state(shared_state: &Arc<Mutex<SharedState>>, status: &str) {
     if let Ok(mut s) = shared_state.lock() {
         if s.status_text != status {
+            debuglog::log("state", &format!("{} -> {}", s.status_text, status));
             s.status_text.clear();
             s.status_text.push_str(status);
         }

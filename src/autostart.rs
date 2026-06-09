@@ -163,7 +163,8 @@ fn macos_remove_login_item(exe_path: &std::path::Path) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn macos_login_item_paths() -> Result<Vec<String>, String> {
-    let out = run_osascript("tell application \"System Events\" to get the path of every login item")?;
+    let out =
+        run_osascript("tell application \"System Events\" to get the path of every login item")?;
     let paths = out
         .split(',')
         .map(|s| s.trim().to_string())

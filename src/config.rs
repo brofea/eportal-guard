@@ -12,7 +12,7 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            ping_interval_secs: 5,
+            ping_interval_secs: 3,
             ping_host: "223.5.5.5".to_string(),
             web_port: 18888,
         }

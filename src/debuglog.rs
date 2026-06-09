@@ -1,11 +1,11 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-static CONSOLE_ENABLED: AtomicBool = AtomicBool::new(false);
+static CONSOLE_ENABLED: AtomicBool = AtomicBool::new(true);
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_console_enabled(enabled: bool) {

@@ -378,7 +378,10 @@ pub fn start_web_server(
             if let Err(payload) = result {
                 debuglog::log(
                     "web",
-                    &format!("request handler panicked: {}", panic_message(payload.as_ref())),
+                    &format!(
+                        "request handler panicked: {}",
+                        panic_message(payload.as_ref())
+                    ),
                 );
             }
         }
@@ -394,6 +397,7 @@ fn handle_request(
     exe_path: &std::path::Path,
 ) {
     let url = req.url().to_string();
+    debuglog::log("web", &format!("{} {}", req.method().as_str(), url));
     match (req.method(), url.as_str()) {
         (&Method::Get, "/") => {
             let body = render_home(state, config_path, curl_path, exe_path);
@@ -435,12 +439,7 @@ fn handle_request(
                 .get("ping_interval_secs")
                 .and_then(|s| s.parse::<u64>().ok())
             {
-                cfg.ping_interval_secs = v.max(1);
-            }
-            if let Some(v) = form.get("ping_host") {
-                if !v.trim().is_empty() {
-                    cfg.ping_host = v.trim().to_string();
-                }
+                cfg.ping_interval_secs = v.clamp(1, 3600);
             }
             if let Some(v) = form.get("web_port").and_then(|s| s.parse::<u16>().ok()) {
                 cfg.web_port = v;
@@ -583,13 +582,12 @@ fn render_home(
                     <div id='result' data-tone='idle' aria-live='polite'>等待操作</div>\
                     <section class='panel' style='margin-top:18px'>\
                         <div class='panel-header'>\
-                            <div><h2 class='panel-title'>连接设置</h2><p class='panel-note'>调整探测频率、目标主机和控制台端口。</p></div>\
+                            <div><h2 class='panel-title'>连接设置</h2><p class='panel-note'>调整网络探针频率和本机控制台端口。</p></div>\
                         </div>\
                         <div class='panel-body'>\
                             <form id='cfgForm'>\
                                 <div class='field-grid'>\
-                                    <div><label for='ping_interval_secs'>Ping 间隔（秒）</label><input id='ping_interval_secs' name='ping_interval_secs' inputmode='numeric' value='{}'></div>\
-                                    <div><label for='ping_host'>Ping 服务器</label><input id='ping_host' name='ping_host' value=\"{}\"></div>\
+                                    <div><label for='ping_interval_secs'>探针间隔（秒）</label><input id='ping_interval_secs' name='ping_interval_secs' inputmode='numeric' value='{}'></div>\
                                     <div><label for='web_port'>Web 端口</label><input id='web_port' name='web_port' inputmode='numeric' value='{}'></div>\
                                 </div>\
                                 <div class='actions'><button class='primary' type='button' onclick=\"postAction('/save','cfgForm')\">保存配置</button></div>\
@@ -629,7 +627,6 @@ fn render_home(
         if autostart { "已开启" } else { "已关闭" },
         cfg.web_port,
         cfg.ping_interval_secs,
-        html_escape(&cfg.ping_host),
         cfg.web_port,
         html_escape(&curl),
         WEB_JS,

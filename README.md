@@ -21,7 +21,7 @@
 
 ## 功能
 
-- **断网秒连接，无感重连**：后台自动检测网络，一旦断网自动尝试登录，再也不用手动点开登录页
+- **断网自动重连，安静守护**：后台通过网络探针检测互联网状态，仅在内网可达、互联网不可达且已配置 cURL 时尝试登录
 
 - **全场景守护，随时在线**：无论是笔记本开合休眠、还是电脑关机重启，开机即联网，告别“每次重新登录”的烦恼
 
@@ -81,7 +81,7 @@ sudo xattr -rd com.apple.quarantine /Applications/ePortal\ Guard.app
 cargo build --release
 ```
 
-已启用体积优化：`panic = "abort"`, `lto = true`, `opt-level = "z"`, `codegen-units = 1`, `strip = true`。
+已启用体积优化：`lto = true`, `opt-level = "z"`, `codegen-units = 1`, `strip = true`。
 
 使用命令临时运行：
 
@@ -105,7 +105,6 @@ cargo run --release
 ## 代办事项
 
 - [x] 补上 FireFox 的 cURL 获取方法
-- [ ] 多次失败会陷入反复重连
-- [ ] 即使有网，当前 cURL 不可用时也会反复重连
-
+- [x] 多次失败会陷入反复重连
+- [x] 即使有网，当前 cURL 不可用时也会反复重连
 
