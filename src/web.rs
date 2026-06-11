@@ -481,14 +481,19 @@ fn handle_request(
             }
         }
         (&Method::Post, "/manual-login") => {
-            // 手动登录直接执行用户保存的 cURL，不参与自动失败计数。
+            // 手动登录直接发送用户保存的 HTTP 请求，不参与自动失败计数。
             let cmd = config::read_curl(curl_path).unwrap_or_default();
-            let ok = crate::platform::shell_run(&cmd);
-            let _ = req.respond(
-                Response::from_string(if ok { "ok" } else { "failed" }).with_status_code(200),
-            );
-            if ok {
-                notifier::notify("ePortal Guard", "手动登录执行完成");
+            match crate::login::send_curl_request(&cmd) {
+                Ok(result) => {
+                    let _ = req.respond(
+                        Response::from_string(format!("http {}", result.status))
+                            .with_status_code(200),
+                    );
+                    notifier::notify("ePortal Guard", "手动登录执行完成");
+                }
+                Err(e) => {
+                    let _ = req.respond(Response::from_string(e).with_status_code(500));
+                }
             }
         }
         (&Method::Post, "/tutorial") => {

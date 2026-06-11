@@ -1,11 +1,8 @@
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-use std::process::Command;
 use std::time::Instant;
 
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+use reqwest::blocking::Client;
+use reqwest::redirect::Policy;
 
 // 两个大厂探针都不可达时，才认为互联网不可达，降低单点误判概率。
 pub const MIUI_204_URL: &str = "http://connect.rom.miui.com/generate_204";
@@ -45,46 +42,17 @@ pub fn head_probe(url: &str, status_ok: impl Fn(u16) -> bool) -> HeadProbe {
 
 fn head_probe_with_args(url: &str, status_ok: impl Fn(u16) -> bool) -> HeadProbe {
     let begin = Instant::now();
-    // 复用系统 curl 发 HEAD，避免引入 HTTP 客户端依赖，也贴近用户登录命令环境。
+    // 使用 Rust HTTP 客户端发 HEAD，避免依赖外部命令或弹出命令行窗口。
     // --noproxy '*' 防止系统代理影响探针结果；校园网连通性应该按直连链路判断。
-    let output_path = if cfg!(target_os = "windows") {
-        "NUL"
-    } else {
-        "/dev/null"
-    };
-    let mut args = vec![
-        "--head",
-        "--silent",
-        "--show-error",
-        "--max-time",
-        "3",
-        "--noproxy",
-        "*",
-        "--output",
-        output_path,
-        "--write-out",
-        "%{http_code}",
-    ];
-    args.push(url);
+    let result = Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .redirect(Policy::none())
+        .no_proxy()
+        .build()
+        .and_then(|client| client.head(url).send());
 
-    let mut command = Command::new("curl");
-    command.args(args);
-    let output = hide_window(&mut command).output();
-
-    let (process_ok, exit_code, status_code, error_message) = match output {
-        Ok(output) => {
-            let status_code = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .parse::<u16>()
-                .unwrap_or(0);
-            let error_message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            (
-                output.status.success(),
-                output.status.code(),
-                status_code,
-                error_message,
-            )
-        }
+    let (process_ok, exit_code, status_code, error_message) = match result {
+        Ok(response) => (true, None, response.status().as_u16(), String::new()),
         Err(e) => (false, None, 0, e.to_string()),
     };
     let ok = process_ok && status_ok(status_code);
@@ -122,26 +90,6 @@ fn is_private_v4(ip: Ipv4Addr) -> bool {
     // 校园网通常会分配 RFC1918 私网地址；这里只把 IPv4 私网视作“连接内网”。
     let [a, b, _, _] = ip.octets();
     a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168)
-}
-
-pub fn curl_exists() -> bool {
-    let mut command = Command::new("curl");
-    command.arg("--version");
-    hide_window(&mut command)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-#[cfg(target_os = "windows")]
-fn hide_window(command: &mut Command) -> &mut Command {
-    // 探针和 curl --version 都是后台命令，Windows 下必须禁用控制台窗口闪现。
-    command.creation_flags(CREATE_NO_WINDOW)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn hide_window(command: &mut Command) -> &mut Command {
-    command
 }
 
 fn generate_204_status_ok(code: u16) -> bool {

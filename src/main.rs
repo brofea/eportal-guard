@@ -3,6 +3,7 @@
 mod autostart;
 mod config;
 mod debuglog;
+mod login;
 mod network;
 mod notifier;
 mod paths;
@@ -236,14 +237,6 @@ fn start_monitor(
                 debuglog::log("监控", "互联网可访问，跳过自动登录");
                 reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
                 set_state(&shared_state, "网络正常");
-            } else if !network::curl_exists() {
-                // 系统 curl 缺失属于登录失败条件，但也遵守 5 次后暂停的策略。
-                register_login_failure(
-                    &shared_state,
-                    &mut login_failure_count,
-                    &mut login_failure_notified,
-                    "未检测到系统 curl 命令",
-                );
             } else if login_failure_count >= MAX_LOGIN_FAILURES {
                 debuglog::log(
                     "监控",
@@ -254,18 +247,20 @@ fn start_monitor(
                 );
                 set_state(&shared_state, "无法登陆，已暂停重试");
             } else {
-                debuglog::log("监控", "互联网不可访问，开始执行登录 cURL");
-                let curl_exit_ok = platform::shell_run_capture(&curl_cmd);
-                debuglog::log(
-                    "监控",
-                    &format!(
-                        "登录 cURL 命令退出结果: {}",
-                        if curl_exit_ok { "成功" } else { "失败" }
+                debuglog::log("监控", "互联网不可访问，开始发送登录 HTTP 请求");
+                match login::send_curl_request(&curl_cmd) {
+                    Ok(result) => debuglog::log(
+                        "监控",
+                        &format!(
+                            "登录 HTTP 请求已发送 | {} {} | HTTP {}",
+                            result.method, result.url, result.status
+                        ),
                     ),
-                );
+                    Err(e) => debuglog::log("监控", &format!("登录 HTTP 请求发送失败: {}", e)),
+                }
 
                 let after_login_probe = network::internet_probe();
-                let login_ok = curl_exit_ok && after_login_probe.ok;
+                let login_ok = after_login_probe.ok;
                 debuglog::log(
                     "监控",
                     &format!(
