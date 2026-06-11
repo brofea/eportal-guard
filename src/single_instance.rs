@@ -1,7 +1,6 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 // 用锁文件实现单实例：后启动的进程读取旧实例端口并拉起 Web 控制台。
 pub struct SingleInstance {
@@ -92,33 +91,45 @@ fn parse_pid(text: &str) -> Option<u32> {
 }
 
 fn process_exists(pid: u32) -> bool {
-    // 不直接发送信号探测，避免权限差异；用系统命令查询更保守。
+    // 用系统 API 探测进程，避免启动外部命令导致窗口闪烁。
     #[cfg(target_os = "windows")]
     {
-        let filter = format!("PID eq {}", pid);
-        let output = Command::new("tasklist")
-            .args(["/FI", &filter, "/FO", "CSV", "/NH"])
-            .output();
-        let Ok(output) = output else {
-            return false;
-        };
-        if !output.status.success() {
+        type Handle = *mut core::ffi::c_void;
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const STILL_ACTIVE: u32 = 259;
+
+        #[link(name = "Kernel32")]
+        unsafe extern "system" {
+            fn OpenProcess(
+                dw_desired_access: u32,
+                b_inherit_handle: i32,
+                dw_process_id: u32,
+            ) -> Handle;
+            fn GetExitCodeProcess(h_process: Handle, lp_exit_code: *mut u32) -> i32;
+            fn CloseHandle(h_object: Handle) -> i32;
+        }
+
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
             return false;
         }
-        let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
-        return !text.contains("no tasks") && text.contains(&format!(",\"{}\"", pid));
+        let mut exit_code = 0u32;
+        let ok = unsafe { GetExitCodeProcess(handle, &mut exit_code) != 0 };
+        unsafe {
+            CloseHandle(handle);
+        }
+        return ok && exit_code == STILL_ACTIVE;
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let output = Command::new("ps").args(["-p", &pid.to_string()]).output();
-        let Ok(output) = output else {
-            return false;
-        };
-        if !output.status.success() {
+        unsafe extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+
+        if pid > i32::MAX as u32 {
             return false;
         }
-        let text = String::from_utf8_lossy(&output.stdout);
-        return text.lines().count() > 1;
+        unsafe { kill(pid as i32, 0) == 0 }
     }
 }
