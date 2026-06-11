@@ -44,18 +44,25 @@ pub fn shell_run(command: &str) -> bool {
 }
 
 pub fn shell_run_capture(command: &str) -> bool {
-    let normalized = normalize_command(command);
-
     // cURL 登录命令本质是用户复制来的 shell 命令，按平台交给系统 shell 执行。
     #[cfg(target_os = "windows")]
     {
-        let mut command = Command::new("cmd");
-        command.args(["/C", &normalized]);
+        let normalized = normalize_windows_powershell_command(command);
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &normalized,
+        ]);
         return command_output(hide_window(&mut command));
     }
 
     #[cfg(not(target_os = "windows"))]
     {
+        let normalized = normalize_command(command);
         return command_output(Command::new("sh").arg("-c").arg(&normalized));
     }
 }
@@ -111,9 +118,21 @@ fn normalize_command(input: &str) -> String {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn normalize_windows_powershell_command(input: &str) -> String {
+    let normalized = normalize_command(input);
+    if normalized == "curl" {
+        return "curl.exe".to_string();
+    }
+    if let Some(rest) = normalized.strip_prefix("curl ") {
+        return format!("curl.exe {}", rest);
+    }
+    normalized
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize_command;
+    use super::{normalize_command, normalize_windows_powershell_command};
 
     #[test]
     fn normalize_multiline_curl_with_crlf() {
@@ -130,5 +149,12 @@ mod tests {
         let raw = "$ curl https://example.com -I\n";
         let got = normalize_command(raw);
         assert_eq!(got, "curl https://example.com -I");
+    }
+
+    #[test]
+    fn normalize_windows_powershell_uses_curl_exe() {
+        let raw = "curl 'https://example.com' -H 'A: B'";
+        let got = normalize_windows_powershell_command(raw);
+        assert_eq!(got, "curl.exe 'https://example.com' -H 'A: B'");
     }
 }
