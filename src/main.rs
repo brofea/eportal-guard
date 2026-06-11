@@ -65,6 +65,7 @@ fn run() -> Result<(), String> {
             debuglog::log("核心", "获取单实例锁失败，已有实例正在运行");
             let port =
                 single_instance::SingleInstance::read_web_port(&lock_path).unwrap_or(cfg.web_port);
+            notifier::notify("ePortal Guard", "应用已经启动过了，正在打开控制台");
             open_web_panel(port, "已有实例");
             return Ok(());
         }
@@ -90,12 +91,15 @@ fn run() -> Result<(), String> {
         cfg.web_port,
     );
 
-    if config::read_curl(&curl_path)
+    let curl_is_empty = config::read_curl(&curl_path)
         .map(|s| s.trim().is_empty())
-        .unwrap_or(true)
-    {
+        .unwrap_or(true);
+    if curl_is_empty {
         // 首次使用还没有 cURL 时主动打开控制台，引导用户完成配置。
         open_web_panel(cfg.web_port, "cURL 为空");
+    } else {
+        // 已配置 cURL 时不会自动打开控制台，用系统通知给用户一个启动反馈。
+        notifier::notify("ePortal Guard", "应用已启动");
     }
 
     start_monitor(

@@ -21,6 +21,7 @@ const statusToneMap = [
     ['成功', 'good'],
     ['掉线', 'warn'],
     ['尝试', 'warn'],
+    ['退出', 'warn'],
     ['失败', 'bad'],
     ['未连接', 'idle'],
     ['初始化', 'idle'],
@@ -60,7 +61,12 @@ async function postAction(action, formId) {
             body = new URLSearchParams(new FormData(form));
         }
     }
-    setResult('正在提交...', 'busy');
+    if (action === '/quit') {
+        setStatusText('程序已退出');
+        setResult('程序已退出...', 'warn');
+    } else {
+        setResult('正在提交...', 'busy');
+    }
     try {
         const resp = await fetch(action, {
             method: 'POST',
@@ -244,6 +250,7 @@ h1 { font-size: 26px; line-height: 1.1; letter-spacing: 0; }
 }
 
 #result[data-tone="good"] { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
+#result[data-tone="warn"] { color: #92400e; background: #fffbeb; border-color: #fde68a; }
 #result[data-tone="bad"] { color: var(--red); background: #fef2f2; border-color: #fecaca; }
 #result[data-tone="busy"] { color: var(--blue-ink); background: #eff6ff; border-color: #bfdbfe; }
 
@@ -516,11 +523,26 @@ fn handle_request(
         }
         (&Method::Post, "/quit") => {
             // 由主线程轮询 running 标志并自然退出，确保锁文件 Drop 清理。
+            set_shared_status(state, "程序已退出");
             running.store(false, Ordering::SeqCst);
-            let _ = req.respond(Response::from_string("bye").with_status_code(200));
+            let _ = req.respond(Response::from_string("程序已退出").with_status_code(200));
         }
         _ => {
             let _ = req.respond(Response::from_string("not found").with_status_code(404));
+        }
+    }
+}
+
+fn set_shared_status(state: &Arc<Mutex<SharedState>>, status: &str) {
+    // Web 侧的即时操作也需要更新共享状态，让控制台下一次轮询能立即反映出来。
+    if let Ok(mut s) = state.lock() {
+        if s.status_text != status {
+            debuglog::log(
+                "网页",
+                &format!("状态变化: {} -> {}", s.status_text, status),
+            );
+            s.status_text.clear();
+            s.status_text.push_str(status);
         }
     }
 }
