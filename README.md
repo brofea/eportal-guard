@@ -76,7 +76,7 @@
 ```
 sudo xattr -rd com.apple.quarantine /Applications/ePortal\ Guard.app
 ```
-
+- 若 macOS 提示 Where is use_default，请选择你的默认浏览器
 - 若 Windows Defender 提示软件存在风险，请无视并选择"更多信息"和“仍要运行”
 
 ## 开发者指南 / 快速开始
