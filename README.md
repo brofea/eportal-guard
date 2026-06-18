@@ -37,6 +37,8 @@
 
 ## 如何使用
 
+[下载链接](https://github.com/brofea/eportal-guard/releases)
+
 首先需要抓取登录报文填入控制台，以下给出两种浏览器的方法
 
 ### 以 Chrome 为例 
