@@ -1,162 +1,73 @@
-# Cross-Layer Thinking Guide
+# 跨层思维指南
 
-> **Purpose**: Think through data flow across layers before implementing.
+> **目的**：想清本仓库真正的「层」——不是前后端，而是**线程、文件、浏览器页面**
+> 三条边界的契约。绝大多数历史 bug 出在这些边界上：状态没同步、文案没匹配、
+> 文件改动没被重读、平台分支漏一个。
 
----
-
-## The Problem
-
-**Most bugs happen at layer boundaries**, not within layers.
-
-Common cross-layer bugs:
-- API returns format A, frontend expects format B
-- Database stores X, service transforms to Y, but loses data
-- Multiple layers implement the same logic differently
-
----
-
-## Before Implementing Cross-Layer Features
-
-### Step 1: Map the Data Flow
-
-Draw out how data moves:
+## 边界一：三个线程 + 退出开关
 
 ```
-Source → Transform → Store → Retrieve → Transform → Display
+main 线程 ──创建──► Web 线程（start_web_server）
+   │                   每请求 catch_unwind；写 SharedState / config 文件
+   └──创建──► 监控线程（start_monitor）
+                 每轮重读 config.toml + curl.txt；写 SharedState
+主线程轮询 Arc<AtomicBool> running（/quit 置 false）→ 主线程自然退出 → Drop 释放锁
 ```
 
-For each arrow, ask:
-- What format is the data in?
-- What could go wrong?
-- Who is responsible for validation?
+- `SharedState` 有两个写者（监控线程 + Web 路由），`status_text` 的写入必须经过
+  统一的「锁内比对、变化才记日志」逻辑（见 code-reuse 指南 §重复模式地图）。
+- **Web 路由不得自建线程**；长动作（手动登录）当前是同步阻塞在请求线程内的
+  （10s 超时封顶），新增类似动作保持同步 + 明确超时，不要改异步。
+- 退出契约：`/quit` 只 `running.store(false)`；任何新「退出/重启」路径都必须走
+  主线程轮询 → 函数返回 → `Drop`（删 app.lock），禁止 `process::exit` /
+  `std::process::Command` 自杀式重启。
 
-### Step 2: Identify Boundaries
+## 边界二：文件是线程间唯一的持久契约
 
-| Boundary | Common Issues |
-|----------|---------------|
-| API ↔ Service | Type mismatches, missing fields |
-| Service ↔ Database | Format conversions, null handling |
-| Backend ↔ Frontend | Serialization, date formats |
-| Component ↔ Component | Props shape changes |
+Web 写、监控读，靠**每轮重读 + 值比对**感知变化，没有内存消息：
 
-### Step 3: Define Contracts
+- config.toml：监控每轮 `load_config`，与上一轮比对三项，任一变化 → 通知「配置更新」。
+- curl.txt：内容变化 → 重置登录失败计数（`reset_login_failures`）。
+- 含义：**只改内存不落盘 = 监控永远看不到**；只改文件而监控仍在旧分支 = 下轮才生效。
+  新增「用户可配置项」时必须决定它走哪条持久通道，并回答：
+  监控线程在哪一轮读到它？谁负责写？变化时要不要重置失败计数？
+- 所有运行时文件路径只能来自 `paths.rs`（web/监控线程拿到的都是 main 传入的 PathBuf），
+  新增文件先加 `paths::xxx_path()`。
 
-For each boundary:
-- What is the exact input format?
-- What is the exact output format?
-- What errors can occur?
+## 边界三：状态文案契约（页面配色依赖关键字）
 
----
+监控/Web 写入的 `status_text` → 页面每 2s `GET /status` 拉取 → JS `statusToneMap`
+按**子串**匹配决定卡片 tone（good/warn/bad/idle）：
 
-## Common Cross-Layer Mistakes
+- 匹配表：`正常`/`成功`→good，`掉线`/`尝试`/`退出`→warn，`失败`→bad，
+  `未连接`/`初始化`→idle；不匹配 → idle。
+- 新增状态文案 = 隐式改页面行为：文案不含关键字 → 页面永远 idle（视觉失联）。
+- 真实案例思维实验：若新状态写「登录排队中」，四个 tone 全不中 → 用户以为守护失效。
+  正确写法含既有关键字（如「等待登录尝试」→warn）或同步扩展 `statusToneMap` 并自测。
+- 匹配数组有顺序：`正常` 在 `成功` 前；新增文案注意被更早关键字吞掉的可能
+  （如含「正常」子串的文案永远 good）。
 
-### Mistake 1: Implicit Format Assumptions
+## 边界四：HTTP 端点的双侧耦合
 
-**Bad**: Assuming date format without checking
+每个端点 = `handle_request` 一个 match 分支 + 页面一处 `postAction(...)` 调用
+（可能再加按钮文案/`#result` 提示）。任何一侧改动都要把另一侧一起改；
+删除端点同理。`WEB_JS`/`WEB_CSS` 是嵌在 rust raw string 里的页面，
+**改页面后要确认 raw string 边界没被 `"` / `#` / 换行破坏**。
 
-**Good**: Explicit format conversion at boundaries
+## 边界五：监控状态机与失败计数（改触发条件先看重置点）
 
-### Mistake 2: Scattered Validation
+状态机：cURL 空 → 跳过；内网断 → 跳过；外网通 → 重置+「网络正常」；
+外网断且失败 < 5 → 登录 + 复查；≥5 → 暂停 + 单次通知。
 
-**Bad**: Validating the same thing in multiple layers
+- 重置点有三：cURL 内容变化、网络恢复、内网断开。改动任何一处「跳过/恢复」逻辑时，
+  对照此清单确认失败计数语义仍自洽（计数不清零会造成永久停摆，清太勤会失去 5 次退避）。
+- 复查以登录后探针为准，不是以 `send_curl_request` 返回成功为准（HTTP 200 ≠ 上网成功）。
 
-**Good**: Validate once at the entry point
+## 实施前自检清单
 
-### Mistake 3: Leaky Abstractions
-
-**Bad**: Component knows about database schema
-
-**Good**: Each layer only knows its neighbors
-
----
-
-## Checklist for Cross-Layer Features
-
-Before implementation:
-- [ ] Mapped the complete data flow
-- [ ] Identified all layer boundaries
-- [ ] Defined format at each boundary
-- [ ] Decided where validation happens
-
-After implementation:
-- [ ] Tested with edge cases (null, empty, invalid)
-- [ ] Verified error handling at each boundary
-- [ ] Checked data survives round-trip
-
----
-
-## Cross-Platform Template Consistency
-
-In Trellis, command templates (e.g., `record-session.md`) exist in **multiple platforms** with identical or near-identical content. This is a cross-layer boundary.
-
-### Checklist: After Modifying Any Command Template
-
-- [ ] Find all platforms with the same command: `find src/templates/*/commands/trellis/ -name "<command>.*"`
-- [ ] Update all platform copies (Markdown `.md` and TOML `.toml`)
-- [ ] For Gemini TOML: adapt line continuations (`\\` vs `\`) and triple-quoted strings
-- [ ] Run `/trellis:check-cross-layer` to verify nothing was missed
-
-**Real-world example**: Updated `record-session.md` in Claude to use `--mode record`, but forgot iFlow, Kilo, OpenCode, and Gemini — caught by cross-layer check.
-
----
-
-## Generated Runtime Template Upgrade Consistency
-
-Some generated files are both documentation and runtime input. In Trellis,
-`.trellis/workflow.md` is parsed by `get_context.py`, `workflow_phase.py`,
-SessionStart filters, and per-turn hooks. Template changes must be validated
-against both fresh init and upgrade paths.
-
-### Checklist: After Modifying A Runtime-Parsed Template
-
-- [ ] Identify every runtime parser that reads the template, not just the file
-  writer that installs it
-- [ ] Check whether relevant syntax lives outside obvious managed regions
-  such as tag blocks
-- [ ] Verify fresh `init` output and a versioned `update` scenario that writes
-  the older `.trellis/.version`
-- [ ] Add an upgrade regression using an older pristine template fixture, then
-  assert the installed file reaches the current packaged shape
-- [ ] Update the backend spec that owns the runtime contract
-
-**Real-world example**: Codex inline mode changed workflow platform markers from
-`[Codex]` / `[Kilo, Antigravity, Windsurf]` to `[codex-sub-agent]` /
-`[codex-inline, Kilo, Antigravity, Windsurf]`. Fresh init was correct, but
-`trellis update` only merged `[workflow-state:*]` blocks and preserved stale
-markers outside those blocks. Result: upgraded projects got new hook scripts
-but old workflow routing, so `get_context.py --mode phase --platform codex`
-could return empty Phase 2.1 detail.
-
----
-
-## Mode-Detection Probe Checklist
-
-When a CLI auto-detects a mode by probing a remote resource (e.g., checking if `index.json` exists to decide marketplace vs direct download):
-
-### Before implementing:
-- [ ] Probe runs in **ALL** code paths that use the result (interactive, `-y`, `--flag` combos)
-- [ ] 404 vs transient error are distinguished — don't treat both as "not found"
-- [ ] Transient errors **abort or retry**, never silently switch modes
-- [ ] Shared state (caches, prefetched data) is **reset** when context changes (e.g., user switches source)
-- [ ] **Shortcut paths** (e.g., `--template` skipping picker) must have the same error-handling quality as the probed path — check that downstream functions don't call catch-all wrappers
-
-### After implementing:
-- [ ] Trace every path from probe result to the mode-decision branch — no fallthrough
-- [ ] External format contracts (giget URI, raw URLs) are tested or at least documented as comments
-- [ ] Metadata reads consume a complete response or use a streaming parser — never parse a fixed-size prefix as full JSON
-- [ ] When reconstructing a composite identifier from parsed parts, verify **all** fields are included and in the **correct position** (e.g., `provider:repo/path#ref` not `provider:repo#ref/path`)
-- [ ] Verify that **action functions** called after a shortcut don't internally use the old catch-all fetch — they must use the probe-quality variant when error distinction matters
-
-**Real-world example**: Custom registry flow had 8 bugs across 3 review rounds: (1) probe only ran in interactive mode, (2) transient errors fell through to wrong mode, (3) giget URI had `#ref` in wrong position, (4) prefetched templates leaked across source switches, (5) `--template` shortcut bypassed probe but `downloadTemplateById` internally used catch-all `fetchTemplateIndex`, turning timeouts into "Template not found".
-
-**Real-world example**: Agent-session update hints fetched npm `latest` metadata with `response.read(4096)` and then parsed it as complete JSON. The `@mindfoldhq/trellis` package metadata exceeded 4 KB, so the JSON was truncated, parse failed silently, and the first session injection showed no update hint. Fix: read the complete response before parsing, and add a regression where `version` is followed by an 8 KB metadata tail.
-
----
-
-## When to Create Flow Documentation
-
-Create detailed flow docs when:
-- Feature spans 3+ layers
-- Multiple teams are involved
-- Data format is complex
-- Feature has caused bugs before
+- [ ] 画出改动涉及的数据流：哪个线程读、哪个写、走哪份文件、页面如何展示
+- [ ] 状态文案关键字、端点字符串、组件标签、字段名全部 grep 过
+- [ ] 平台分支（win/mac/linux + 兜底）有结论，不依赖单一平台验证
+- [ ] 退出/清理路径经过 Drop，没有旁路 exit
+- [ ] 失败计数/通知的重置与触发条件自洽
+- [ ] 边界测试思路：配置损坏、cURL 空、探针超时、被劫持页 200、双实例启动

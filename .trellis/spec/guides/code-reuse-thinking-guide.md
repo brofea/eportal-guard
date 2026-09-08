@@ -1,105 +1,56 @@
-# Code Reuse Thinking Guide
+# 代码复用思维指南
 
-> **Purpose**: Stop and think before creating new code - does it already exist?
+> **目的**：写新代码前先确认仓库里是否已存在等价物。本仓库规模小，重复的代价是
+> 「同一处修复漏掉另一份拷贝」——跨文件字符串耦合（端点、状态文案、组件标签）
+> 尤其危险，因为没有编译器帮你查。
 
----
+## 常量与字符串的唯一来源（先搜后改）
 
-## The Problem
+改动任何一处前先 grep 全仓库，确认有没有第二份：
 
-**Duplicated code is the #1 source of inconsistency bugs.**
+| 值 | 唯一来源 | 改动影响面 |
+|----|----------|-----------|
+| 探针 URL（miui/huawei generate_204） | `network.rs` 顶部常量 | 网络探测行为 |
+| `MAX_LOGIN_FAILURES`（=5） | `main.rs` 顶部 | 失败暂停阈值 |
+| `WINDOWS_APP_ID`（=brofea.eportal_guard） | `notifier.rs` | Toast 归属 + 注册表键 |
+| `APP_DIR_NAME` / `APP_RUN_KEY_NAME` | `paths.rs` | 全部运行时路径；`autostart.rs` 引 `APP_RUN_KEY_NAME` |
+| `TUTORIAL_URL` | `web.rs` | 教程按钮 |
+| HTTP 端点路径（`/save`、`/manual-login`…） | `web.rs` match 分支 **与** `WEB_JS` fetch | 双侧必须同步 |
+| 状态文案（`status_text` 取值） | `main.rs` / `web.rs` 写点 **与** WEB_JS `statusToneMap` 关键字 | 关键字决定页面底色 |
+| 日志组件标签（"监控" "网页"…） | `debuglog.rs` 日志行内 | 日志检索口径 |
+| config.toml 字段名 | `config.rs` 读写 **与** `web.rs` `/save` 表单名 | 用户已有配置文件 |
+| 发布命名（APP_ID/APP_NAME/APP_DISPLAY_NAME） | `.github/workflows/release-on-tag.yml` env | CI 产物名与元数据 |
 
-When you copy-paste or rewrite existing logic:
-- Bug fixes don't propagate
-- Behavior diverges over time
-- Codebase becomes harder to understand
+「只在一个文件里搜到」≠ 安全：浏览器复制的 cURL 解析、表单字段等用户侧输入
+会以字符串形式跨文件存在（如 `ping_interval_secs` 在 config.rs 与 web.rs 两处）。
+**搜索时把 HTML/JS/TOML 文件都算上**。
 
----
+## 本仓库的重复模式地图（新增第三处前先抽 helper）
 
-## Before Writing New Code
+- 「锁内比对状态并写日志」：`main.rs::set_state` 与 `web.rs::set_shared_status`
+  逻辑相同（仅日志组件标签不同）—— 已两处；写第三处前抽
+  `fn update_status(state: &Arc<Mutex<SharedState>>, component: &str, status: &str)`。
+- 双探针明细日志的 12 行 `format!`：`main.rs::start_monitor` 在登录前/后各一份 ——
+  改探针字段时要同步两份，或抽 `fn describe_probe(p: &network::HeadProbe) -> String`。
+- Web 响应头构造（`Content-Type` header 逐路由重复）—— 新增路由不要再来一份，
+  抽 `fn text_response(body: String) -> Response`。
+- 转义函数：`web.rs::html_escape` 与 `autostart.rs::xml_escape` 转义集不同
+  （HTML：`& < > "`；XML 另有 `'`），是各自用途的正确实现，别合并 —— 但新的
+  HTML 模板插入点必须走 `html_escape`。
+- 「某文件读全文、宽容解析」模式（`load_config` / `parse_curl` / `percent_decode`）：
+  都已存在且带容错语义，新输入解析先复用，勿另造解析器。
 
-### Step 1: Search First
+## 何时抽象 / 何时不抽象
 
-```bash
-# Search for similar function names
-grep -r "functionName" .
+- **抽**：相同逻辑第 3 处出现、逻辑足够复杂容易改漏（如锁内状态更新）、
+  跨文件字符串需同步。
+- **不抽**：只用一次的小工具（如 `append_query` 只服务 `parse_curl`，留在 login.rs）；
+  抽象引入的间接超过重复本身的代价；两组语义不同仅形似的代码（html vs xml 转义）。
+- 抽离的 helper 放回**所属模块**（网络→network.rs、HTTP→login.rs、状态→main/web
+  共享的归属按目录结构.md 的依赖方向定），不新建 `util.rs` 垃圾桶。
 
-# Search for similar logic
-grep -r "keyword" .
-```
+## 提交前检查
 
-### Step 2: Ask These Questions
-
-| Question | If Yes... |
-|----------|-----------|
-| Does a similar function exist? | Use or extend it |
-| Is this pattern used elsewhere? | Follow the existing pattern |
-| Could this be a shared utility? | Create it in the right place |
-| Am I copying code from another file? | **STOP** - extract to shared |
-
----
-
-## Common Duplication Patterns
-
-### Pattern 1: Copy-Paste Functions
-
-**Bad**: Copying a validation function to another file
-
-**Good**: Extract to shared utilities, import where needed
-
-### Pattern 2: Similar Components
-
-**Bad**: Creating a new component that's 80% similar to existing
-
-**Good**: Extend existing component with props/variants
-
-### Pattern 3: Repeated Constants
-
-**Bad**: Defining the same constant in multiple files
-
-**Good**: Single source of truth, import everywhere
-
----
-
-## When to Abstract
-
-**Abstract when**:
-- Same code appears 3+ times
-- Logic is complex enough to have bugs
-- Multiple people might need this
-
-**Don't abstract when**:
-- Only used once
-- Trivial one-liner
-- Abstraction would be more complex than duplication
-
----
-
-## After Batch Modifications
-
-When you've made similar changes to multiple files:
-
-1. **Review**: Did you catch all instances?
-2. **Search**: Run grep to find any missed
-3. **Consider**: Should this be abstracted?
-
----
-
-## Gotcha: Asymmetric Mechanisms Producing Same Output
-
-**Problem**: When two different mechanisms must produce the same file set (e.g., recursive directory copy for init vs. manual `files.set()` for update), structural changes (renaming, moving, adding subdirectories) only propagate through the automatic mechanism. The manual one silently drifts.
-
-**Symptom**: Init works perfectly, but update creates files at wrong paths or misses files entirely.
-
-**Prevention checklist**:
-- [ ] When migrating directory structures, search for ALL code paths that reference the old structure
-- [ ] If one path is auto-derived (glob/copy) and another is manually listed, the manual one needs updating
-- [ ] Add a regression test that compares outputs from both mechanisms
-
----
-
-## Checklist Before Commit
-
-- [ ] Searched for existing similar code
-- [ ] No copy-pasted logic that should be shared
-- [ ] Constants defined in one place
-- [ ] Similar patterns follow same structure
+- [ ] 新常量/URL/端点/文案已 grep，无第二份需要同步
+- [ ] 没复制第三个相似函数体（抽了 helper 或确认不值得抽）
+- [ ] 引用的符号存在且属于正确的模块（未被重命名/移动）
