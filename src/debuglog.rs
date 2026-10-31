@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 // 调试阶段默认输出到终端，同时也写入配置目录下的 debug.log。
 static CONSOLE_ENABLED: AtomicBool = AtomicBool::new(true);
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 
 pub fn set_console_enabled(enabled: bool) {
     CONSOLE_ENABLED.store(enabled, Ordering::Relaxed);
@@ -27,7 +28,16 @@ pub fn log(component: &str, message: &str) {
     let line = format!("[{}][pid:{}][{}] {}\n", ts, pid, component, message);
 
     if CONSOLE_ENABLED.load(Ordering::Relaxed) {
-        eprint!("{}", line);
+        // 不用 eprint!：终端关闭后 stderr 写入失败时它会 panic，把监控线程一起带走。
+        let _ = std::io::stderr().write_all(line.as_bytes());
+    }
+
+    // 监控每轮都会写日志，超过上限就轮转一份旧日志，避免 debug.log 无限增长。
+    if fs::metadata(path)
+        .map(|m| m.len() > MAX_LOG_BYTES)
+        .unwrap_or(false)
+    {
+        let _ = fs::rename(path, path.with_extension("log.1"));
     }
 
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {

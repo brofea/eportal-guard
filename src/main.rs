@@ -12,6 +12,7 @@ mod single_instance;
 mod web;
 
 use std::net::TcpStream;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -147,170 +148,198 @@ fn start_monitor(
 ) {
     thread::spawn(move || {
         // 自动登录的核心状态机：只有 cURL 已配置、内网可达、外网不可达时才执行登录。
-        let mut previous_cfg = config::load_config(&config_path);
-        let mut login_failure_count: u32 = 0;
-        let mut login_failure_notified = false;
-        let mut previous_curl_cmd = String::new();
+        let mut st = MonitorState {
+            previous_cfg: config::load_config(&config_path),
+            login_failure_count: 0,
+            login_failure_notified: false,
+            previous_curl_cmd: String::new(),
+        };
 
         while running.load(Ordering::SeqCst) {
-            let cfg = config::load_config(&config_path);
-            if cfg.ping_interval_secs != previous_cfg.ping_interval_secs
-                || cfg.ping_host != previous_cfg.ping_host
-                || cfg.web_port != previous_cfg.web_port
-            {
-                // 配置文件可能由 Web UI 或用户手动修改，监控线程每轮重新加载。
-                notifier::notify("ePortal Guard", "配置更新");
-                previous_cfg = cfg.clone();
-            }
-
-            let curl_cmd = config::read_curl(&curl_path).unwrap_or_default();
-            if curl_cmd != previous_curl_cmd {
-                debuglog::log("监控", "检测到 cURL 内容变化，重置登录失败计数");
-                reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
-                previous_curl_cmd = curl_cmd.clone();
-            }
-
-            debuglog::log(
-                "监控",
-                &format!(
-                    "本轮检查 | cURL 已配置: {} | 间隔: {} 秒",
-                    if curl_cmd.trim().is_empty() {
-                        "否"
-                    } else {
-                        "是"
-                    },
-                    cfg.ping_interval_secs.max(1)
-                ),
-            );
-
-            if curl_cmd.trim().is_empty() {
-                // 没有 cURL 时绝不探测和登录，避免空配置状态下刷屏或误报。
-                debuglog::log("监控", "跳过检查: cURL 为空");
-                reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
-                set_state(&shared_state, "未配置 cURL，等待配置");
-                sleep_monitor_interval(&cfg);
-                continue;
-            }
-
-            let intranet_connected = network::has_private_ip();
-            debuglog::log(
-                "监控",
-                &format!(
-                    "内网状态: {}",
-                    if intranet_connected {
-                        "已连接"
-                    } else {
-                        "未连接"
-                    }
-                ),
-            );
-            if !intranet_connected {
-                // 未连接校园内网时跳过外网探针和登录，减少无意义请求。
-                debuglog::log("监控", "跳过检查: 未连接内网");
-                reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
-                set_state(&shared_state, "未连接内网，跳过登录");
-                sleep_monitor_interval(&cfg);
-                continue;
-            }
-
-            let probe = network::internet_probe();
-            debuglog::log(
-                "监控",
-                &format!(
-                    "互联网状态: {} | 小米探针: {} HTTP {} exit {:?} {}ms{} | 华为探针: {} HTTP {} exit {:?} {}ms{}",
-                    if probe.ok {
-                        "可访问"
-                    } else {
-                        "不可访问"
-                    },
-                    if probe.miui.ok { "成功" } else { "失败" },
-                    probe.miui.status_code,
-                    probe.miui.exit_code,
-                    probe.miui.elapsed_ms,
-                    probe_error_suffix(&probe.miui),
-                    if probe.huawei.ok { "成功" } else { "失败" },
-                    probe.huawei.status_code,
-                    probe.huawei.exit_code,
-                    probe.huawei.elapsed_ms,
-                    probe_error_suffix(&probe.huawei),
-                ),
-            );
-
-            if probe.ok {
-                // 外网可达说明当前 cURL 是否过期无关紧要，不应反复执行登录命令。
-                debuglog::log("监控", "互联网可访问，跳过自动登录");
-                reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
-                set_state(&shared_state, "网络正常");
-            } else if login_failure_count >= MAX_LOGIN_FAILURES {
+            // 单轮检查里的 panic 必须隔离：否则监控线程悄悄退出，
+            // 进程和控制台看似还在运行，实际已经不再自动登录。
+            let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                monitor_tick(&mut st, &shared_state, &config_path, &curl_path)
+            }));
+            if let Err(payload) = result {
                 debuglog::log(
                     "监控",
                     &format!(
-                        "登录失败已达到 {} 次，暂停自动执行 cURL，等待 cURL 更新或网络恢复",
-                        MAX_LOGIN_FAILURES
+                        "本轮检查发生 panic，已跳过: {}",
+                        web::panic_message(payload.as_ref())
                     ),
                 );
-                set_state(&shared_state, "无法登陆，已暂停重试");
-            } else {
-                debuglog::log("监控", "互联网不可访问，开始发送登录 HTTP 请求");
-                match login::send_curl_request(&curl_cmd) {
-                    Ok(result) => debuglog::log(
-                        "监控",
-                        &format!(
-                            "登录 HTTP 请求已发送 | {} {} | HTTP {}",
-                            result.method, result.url, result.status
-                        ),
-                    ),
-                    Err(e) => debuglog::log("监控", &format!("登录 HTTP 请求发送失败: {}", e)),
-                }
-
-                let after_login_probe = network::internet_probe();
-                let login_ok = after_login_probe.ok;
-                debuglog::log(
-                    "监控",
-                    &format!(
-                        "登录后复查结果: {} | 小米探针: {} HTTP {} exit {:?} {}ms{} | 华为探针: {} HTTP {} exit {:?} {}ms{}",
-                        if after_login_probe.ok {
-                            "互联网已恢复"
-                        } else {
-                            "互联网仍不可访问"
-                        },
-                        if after_login_probe.miui.ok {
-                            "成功"
-                        } else {
-                            "失败"
-                        },
-                        after_login_probe.miui.status_code,
-                        after_login_probe.miui.exit_code,
-                        after_login_probe.miui.elapsed_ms,
-                        probe_error_suffix(&after_login_probe.miui),
-                        if after_login_probe.huawei.ok {
-                            "成功"
-                        } else {
-                            "失败"
-                        },
-                        after_login_probe.huawei.status_code,
-                        after_login_probe.huawei.exit_code,
-                        after_login_probe.huawei.elapsed_ms,
-                        probe_error_suffix(&after_login_probe.huawei),
-                    ),
-                );
-
-                if login_ok {
-                    reset_login_failures(&mut login_failure_count, &mut login_failure_notified);
-                    set_state(&shared_state, "自动登录成功");
-                } else {
-                    register_login_failure(
-                        &shared_state,
-                        &mut login_failure_count,
-                        &mut login_failure_notified,
-                        "自动登录失败",
-                    );
-                }
             }
-
-            sleep_monitor_interval(&cfg);
+            sleep_monitor_interval(&config::load_config(&config_path));
         }
     });
+}
+
+struct MonitorState {
+    previous_cfg: config::AppConfig,
+    login_failure_count: u32,
+    login_failure_notified: bool,
+    previous_curl_cmd: String,
+}
+
+fn monitor_tick(
+    st: &mut MonitorState,
+    shared_state: &Arc<Mutex<SharedState>>,
+    config_path: &std::path::Path,
+    curl_path: &std::path::Path,
+) {
+    let cfg = config::load_config(config_path);
+    if cfg.ping_interval_secs != st.previous_cfg.ping_interval_secs
+        || cfg.ping_host != st.previous_cfg.ping_host
+        || cfg.web_port != st.previous_cfg.web_port
+    {
+        // 配置文件可能由 Web UI 或用户手动修改，监控线程每轮重新加载。
+        notifier::notify("ePortal Guard", "配置更新");
+        st.previous_cfg = cfg.clone();
+    }
+
+    let curl_cmd = config::read_curl(curl_path).unwrap_or_default();
+    if curl_cmd != st.previous_curl_cmd {
+        debuglog::log("监控", "检测到 cURL 内容变化，重置登录失败计数");
+        reset_login_failures(&mut st.login_failure_count, &mut st.login_failure_notified);
+        st.previous_curl_cmd = curl_cmd.clone();
+    }
+
+    debuglog::log(
+        "监控",
+        &format!(
+            "本轮检查 | cURL 已配置: {} | 间隔: {} 秒",
+            if curl_cmd.trim().is_empty() {
+                "否"
+            } else {
+                "是"
+            },
+            cfg.ping_interval_secs.max(1)
+        ),
+    );
+
+    if curl_cmd.trim().is_empty() {
+        // 没有 cURL 时绝不探测和登录，避免空配置状态下刷屏或误报。
+        debuglog::log("监控", "跳过检查: cURL 为空");
+        reset_login_failures(&mut st.login_failure_count, &mut st.login_failure_notified);
+        set_state(shared_state, "未配置 cURL，等待配置");
+        return;
+    }
+
+    let intranet_connected = network::has_private_ip();
+    debuglog::log(
+        "监控",
+        &format!(
+            "内网状态: {}",
+            if intranet_connected {
+                "已连接"
+            } else {
+                "未连接"
+            }
+        ),
+    );
+    if !intranet_connected {
+        // 未连接校园内网时跳过外网探针和登录，减少无意义请求。
+        debuglog::log("监控", "跳过检查: 未连接内网");
+        reset_login_failures(&mut st.login_failure_count, &mut st.login_failure_notified);
+        set_state(shared_state, "未连接内网，跳过登录");
+        return;
+    }
+
+    let probe = network::internet_probe();
+    debuglog::log(
+        "监控",
+        &format!(
+            "互联网状态: {} | 小米探针: {} HTTP {} exit {:?} {}ms{} | 华为探针: {} HTTP {} exit {:?} {}ms{}",
+            if probe.ok {
+                "可访问"
+            } else {
+                "不可访问"
+            },
+            if probe.miui.ok { "成功" } else { "失败" },
+            probe.miui.status_code,
+            probe.miui.exit_code,
+            probe.miui.elapsed_ms,
+            probe_error_suffix(&probe.miui),
+            if probe.huawei.ok { "成功" } else { "失败" },
+            probe.huawei.status_code,
+            probe.huawei.exit_code,
+            probe.huawei.elapsed_ms,
+            probe_error_suffix(&probe.huawei),
+        ),
+    );
+
+    if probe.ok {
+        // 外网可达说明当前 cURL 是否过期无关紧要，不应反复执行登录命令。
+        debuglog::log("监控", "互联网可访问，跳过自动登录");
+        reset_login_failures(&mut st.login_failure_count, &mut st.login_failure_notified);
+        set_state(shared_state, "网络正常");
+    } else if st.login_failure_count >= MAX_LOGIN_FAILURES {
+        debuglog::log(
+            "监控",
+            &format!(
+                "登录失败已达到 {} 次，暂停自动执行 cURL，等待 cURL 更新或网络恢复",
+                MAX_LOGIN_FAILURES
+            ),
+        );
+        set_state(shared_state, "无法登陆，已暂停重试");
+    } else {
+        debuglog::log("监控", "互联网不可访问，开始发送登录 HTTP 请求");
+        match login::send_curl_request(&curl_cmd) {
+            Ok(result) => debuglog::log(
+                "监控",
+                &format!(
+                    "登录 HTTP 请求已发送 | {} {} | HTTP {}",
+                    result.method, result.url, result.status
+                ),
+            ),
+            Err(e) => debuglog::log("监控", &format!("登录 HTTP 请求发送失败: {}", e)),
+        }
+
+        let after_login_probe = network::internet_probe();
+        let login_ok = after_login_probe.ok;
+        debuglog::log(
+            "监控",
+            &format!(
+                "登录后复查结果: {} | 小米探针: {} HTTP {} exit {:?} {}ms{} | 华为探针: {} HTTP {} exit {:?} {}ms{}",
+                if after_login_probe.ok {
+                    "互联网已恢复"
+                } else {
+                    "互联网仍不可访问"
+                },
+                if after_login_probe.miui.ok {
+                    "成功"
+                } else {
+                    "失败"
+                },
+                after_login_probe.miui.status_code,
+                after_login_probe.miui.exit_code,
+                after_login_probe.miui.elapsed_ms,
+                probe_error_suffix(&after_login_probe.miui),
+                if after_login_probe.huawei.ok {
+                    "成功"
+                } else {
+                    "失败"
+                },
+                after_login_probe.huawei.status_code,
+                after_login_probe.huawei.exit_code,
+                after_login_probe.huawei.elapsed_ms,
+                probe_error_suffix(&after_login_probe.huawei),
+            ),
+        );
+
+        if login_ok {
+            reset_login_failures(&mut st.login_failure_count, &mut st.login_failure_notified);
+            set_state(shared_state, "自动登录成功");
+        } else {
+            register_login_failure(
+                shared_state,
+                &mut st.login_failure_count,
+                &mut st.login_failure_notified,
+                "自动登录失败",
+            );
+        }
+    }
 }
 
 fn sleep_monitor_interval(cfg: &config::AppConfig) {

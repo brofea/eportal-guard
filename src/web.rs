@@ -410,6 +410,13 @@ fn handle_request(
         "网页",
         &format!("收到请求: {} {}", req.method().as_str(), url),
     );
+    if !is_local_request(&req) {
+        // 控制台页面含有带账号密码的 cURL，且 POST 能改写它：
+        // 拒绝 DNS 重绑定（Host 不是本机）和其他网站发起的跨站请求（Origin 不是本机）。
+        debuglog::log("网页", "拒绝非本机来源的请求");
+        let _ = req.respond(Response::from_string("forbidden").with_status_code(403));
+        return;
+    }
     match (req.method(), url.as_str()) {
         (&Method::Get, "/") => {
             // 首页每次动态渲染，确保配置文件手动修改后刷新即可看到最新值。
@@ -533,6 +540,29 @@ fn handle_request(
     }
 }
 
+fn is_local_request(req: &Request) -> bool {
+    let header = |name: &'static str| {
+        req.headers()
+            .iter()
+            .find(|h| h.field.equiv(name))
+            .map(|h| h.value.as_str().to_string())
+    };
+    // Host 必须是本机地址；Origin 只在浏览器跨源或 POST 时出现，出现时也必须是本机控制台。
+    let host_ok = header("Host").is_some_and(|h| is_local_host(&h));
+    let origin_ok = match header("Origin") {
+        None => true,
+        Some(origin) => origin.strip_prefix("http://").is_some_and(is_local_host),
+    };
+    host_ok && origin_ok
+}
+
+fn is_local_host(host_port: &str) -> bool {
+    let host = host_port
+        .rsplit_once(':')
+        .map_or(host_port, |(host, _)| host);
+    host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost")
+}
+
 fn set_shared_status(state: &Arc<Mutex<SharedState>>, status: &str) {
     // Web 侧的即时操作也需要更新共享状态，让控制台下一次轮询能立即反映出来。
     if let Ok(mut s) = state.lock() {
@@ -547,7 +577,7 @@ fn set_shared_status(state: &Arc<Mutex<SharedState>>, status: &str) {
     }
 }
 
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     if let Some(message) = payload.downcast_ref::<&str>() {
         message
     } else if let Some(message) = payload.downcast_ref::<String>() {
@@ -735,5 +765,20 @@ fn hex_val(c: u8) -> Option<u8> {
         b'a'..=b'f' => Some(c - b'a' + 10),
         b'A'..=b'F' => Some(c - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_local_host;
+
+    #[test]
+    fn only_loopback_hosts_are_local() {
+        assert!(is_local_host("127.0.0.1:18888"));
+        assert!(is_local_host("localhost:18888"));
+        assert!(is_local_host("127.0.0.1"));
+        assert!(!is_local_host("evil.example.com:18888"));
+        assert!(!is_local_host("127.0.0.1.evil.com:18888"));
+        assert!(!is_local_host("192.168.1.10:18888"));
     }
 }

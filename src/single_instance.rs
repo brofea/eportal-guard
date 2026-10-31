@@ -9,6 +9,43 @@ pub struct SingleInstance {
 }
 
 impl SingleInstance {
+    #[cfg(unix)]
+    pub fn acquire(lock_path: &Path, web_port: u16) -> io::Result<Self> {
+        // Unix 用内核 flock：进程退出（包括崩溃）时锁自动释放。
+        // 旧的 PID 探测在重启后容易撞上被复用的 PID，误判“已有实例”导致开机自启起不来。
+        use std::os::unix::io::AsRawFd;
+
+        const LOCK_EX: i32 = 2;
+        const LOCK_NB: i32 = 4;
+        unsafe extern "C" {
+            fn flock(fd: i32, operation: i32) -> i32;
+        }
+
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)?;
+        if unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "instance already running",
+            ));
+        }
+
+        // 拿到锁后才覆盖内容，第二个实例仍可从这里读到 Web 端口。
+        file.set_len(0)?;
+        let text = format!("pid={}\nweb_port={}\n", std::process::id(), web_port);
+        file.write_all(text.as_bytes())?;
+        file.flush()?;
+        Ok(Self {
+            _file: file,
+            lock_path: lock_path.to_path_buf(),
+        })
+    }
+
+    #[cfg(not(unix))]
     pub fn acquire(lock_path: &Path, web_port: u16) -> io::Result<Self> {
         // create_new 保证锁文件创建是原子的，避免两个实例同时启动时竞态。
         match open_new_lock(lock_path, web_port) {
@@ -64,10 +101,14 @@ impl SingleInstance {
 
 impl Drop for SingleInstance {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.lock_path);
+        // Unix 下锁随文件描述符释放，保留锁文件，避免删除时与新实例竞争。
+        if cfg!(not(unix)) {
+            let _ = std::fs::remove_file(&self.lock_path);
+        }
     }
 }
 
+#[cfg(not(unix))]
 fn open_new_lock(lock_path: &Path, web_port: u16) -> io::Result<File> {
     let mut file = OpenOptions::new()
         .write(true)
@@ -80,6 +121,7 @@ fn open_new_lock(lock_path: &Path, web_port: u16) -> io::Result<File> {
     Ok(file)
 }
 
+#[cfg(not(unix))]
 fn parse_pid(text: &str) -> Option<u32> {
     // 兼容两种格式：旧的 “12345” 和新的 “pid=12345”。
     let first_line = text.lines().next()?.trim();
@@ -90,6 +132,7 @@ fn parse_pid(text: &str) -> Option<u32> {
         .ok()
 }
 
+#[cfg(not(unix))]
 fn process_exists(pid: u32) -> bool {
     // 用系统 API 探测进程，避免启动外部命令导致窗口闪烁。
     #[cfg(target_os = "windows")]
@@ -131,5 +174,24 @@ fn process_exists(pid: u32) -> bool {
             return false;
         }
         unsafe { kill(pid as i32, 0) == 0 }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::SingleInstance;
+
+    #[test]
+    fn second_acquire_fails_and_lock_frees_on_drop() {
+        let path = std::env::temp_dir().join(format!("eg-lock-test-{}", std::process::id()));
+        let first = SingleInstance::acquire(&path, 18888).unwrap();
+        assert!(SingleInstance::acquire(&path, 18889).is_err());
+        assert_eq!(SingleInstance::read_web_port(&path), Some(18888));
+        drop(first);
+        // 模拟崩溃后残留的锁文件：内容还在，但锁已释放，新实例必须能启动。
+        let second = SingleInstance::acquire(&path, 18890).unwrap();
+        assert_eq!(SingleInstance::read_web_port(&path), Some(18890));
+        drop(second);
+        let _ = std::fs::remove_file(&path);
     }
 }

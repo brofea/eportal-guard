@@ -67,6 +67,77 @@ fn head_probe_with_args(url: &str, status_ok: impl Fn(u16) -> bool) -> HeadProbe
 }
 
 pub fn has_private_ip() -> bool {
+    // 开着 VPN（Shadowrocket/Clash 等 TUN 模式）时默认出口是虚拟网卡（如 198.18.0.1），
+    // 只看默认出口会误判“未连接内网”而永远不登录；所以先检查所有已启用网卡。
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if let Some(found) = any_interface_has_private_ip() {
+        return found;
+    }
+    default_route_ip_is_private()
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn any_interface_has_private_ip() -> Option<bool> {
+    use std::ffi::c_void;
+
+    // struct ifaddrs 在 macOS 和 Linux 上前几个字段布局一致（Linux 的 ifa_ifu 是同大小的 union）。
+    #[repr(C)]
+    struct IfAddrs {
+        ifa_next: *mut IfAddrs,
+        ifa_name: *const i8,
+        ifa_flags: u32,
+        ifa_addr: *const u8,
+        ifa_netmask: *const c_void,
+        ifa_dstaddr: *const c_void,
+        ifa_data: *const c_void,
+    }
+
+    unsafe extern "C" {
+        fn getifaddrs(ifap: *mut *mut IfAddrs) -> i32;
+        fn freeifaddrs(ifa: *mut IfAddrs);
+    }
+
+    const AF_INET: u16 = 2;
+    const IFF_UP: u32 = 0x1;
+    const IFF_LOOPBACK: u32 = 0x8;
+
+    let mut head: *mut IfAddrs = std::ptr::null_mut();
+    if unsafe { getifaddrs(&mut head) } != 0 {
+        return None;
+    }
+
+    let mut found = false;
+    let mut cur = head;
+    while !cur.is_null() {
+        let ifa = unsafe { &*cur };
+        cur = ifa.ifa_next;
+        if ifa.ifa_addr.is_null()
+            || ifa.ifa_flags & IFF_UP == 0
+            || ifa.ifa_flags & IFF_LOOPBACK != 0
+        {
+            continue;
+        }
+        // sockaddr 的地址族字段：macOS 是第 2 个字节（前面有 sa_len），Linux 是开头的 u16。
+        #[cfg(target_os = "macos")]
+        let family = unsafe { *ifa.ifa_addr.add(1) } as u16;
+        #[cfg(target_os = "linux")]
+        let family = unsafe { (ifa.ifa_addr as *const u16).read_unaligned() };
+        if family != AF_INET {
+            continue;
+        }
+        // sockaddr_in 的 IPv4 地址在两个平台上都位于偏移 4。
+        let octets = unsafe { (ifa.ifa_addr.add(4) as *const [u8; 4]).read_unaligned() };
+        if is_private_v4(Ipv4Addr::from(octets)) {
+            found = true;
+            break;
+        }
+    }
+
+    unsafe { freeifaddrs(head) };
+    Some(found)
+}
+
+fn default_route_ip_is_private() -> bool {
     // 通过 UDP connect 推断当前默认出口 IP，不真正发送数据包。
     let socket = match UdpSocket::bind("0.0.0.0:0") {
         Ok(s) => s,
@@ -99,6 +170,20 @@ fn generate_204_status_ok(code: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::generate_204_status_ok;
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn interface_scan_runs() {
+        assert!(super::any_interface_has_private_ip().is_some());
+    }
+
+    // 需要真实连着内网（可同时开 VPN）才成立：cargo test -- --ignored
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    #[ignore]
+    fn detects_intranet_even_when_vpn_owns_default_route() {
+        assert!(super::has_private_ip());
+    }
 
     #[test]
     fn generate_204_probe_requires_204_to_avoid_captive_portal_false_positive() {

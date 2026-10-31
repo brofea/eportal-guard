@@ -1,21 +1,35 @@
 #[cfg(target_os = "macos")]
 pub fn notify(summary: &str, body: &str) {
-    // 使用 notify-rust 的 macOS 原生通知后端，避免启动额外子进程。
-    let summary = summary.to_string();
-    let body = body.to_string();
-    let result = std::panic::catch_unwind(move || {
-        notify_rust::Notification::new()
-            .appname("ePortal Guard")
-            .summary(&summary)
-            .body(&body)
-            .show()
-    });
-
-    match result {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => crate::debuglog::log("通知", &format!("发送系统通知失败: {}", e)),
-        Err(_) => crate::debuglog::log("通知", "发送系统通知时发生 panic"),
+    // notify-rust 的 macOS 后端会在当前线程调用 AppKit / NSAppleScript，
+    // 而 notify 会从监控线程和 Web 线程调用：非主线程触碰 AppKit 会直接 abort，
+    // catch_unwind 拦不住，进程整个退出。这里交给独立的 osascript 进程发送，
+    // 本进程不碰 AppKit，也不会因为找不到 bundle 弹出 “Where is use_default”。
+    let script = format!(
+        "display notification \"{}\" with title \"{}\"",
+        applescript_escape(body),
+        applescript_escape(summary)
+    );
+    match std::process::Command::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(script)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(mut child) => {
+            // 不阻塞调用方，单独线程回收子进程，避免留下僵尸进程。
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => crate::debuglog::log("通知", &format!("发送系统通知失败: {}", e)),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_escape(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(target_os = "windows")]
