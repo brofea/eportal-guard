@@ -119,6 +119,12 @@ fn macos_launch_agent_plist(exe_path: &std::path::Path) -> String {
     </array>
     <key>RunAtLoad</key>
     <true/>
+    <!-- 异常退出（崩溃）时由 launchd 拉起；控制台“退出程序”是正常退出，不会被重启。 -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 </dict>
 </plist>
 "#,

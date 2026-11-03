@@ -4,9 +4,12 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
-notify-rust = { version = "4", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 tiny_http = "0.12"
+
+# macOS 通知改走 osascript，不再链接 notify-rust（其 AppKit 后端在后台线程不安全）。
+[target.'cfg(target_os = "windows")'.dependencies]
+notify-rust = { version = "4", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = { version = "4", default-features = false, features = ["z"] }
